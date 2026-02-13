@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: defrog-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-defrog}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - defrog-net
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: defrog-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - POSTGRES_HOST=postgres
+    volumes:
+      - ./app:/app
+      - ./data/raw_docs:/app/data/raw_docs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - defrog-net
+
+  streamlit:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: defrog-dashboard
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://app:8000
+    volumes:
+      - ./dashboard:/app
+    depends_on:
+      - app
+    networks:
+      - defrog-net
+
+networks:
+  defrog-net:
+    driver: bridge
