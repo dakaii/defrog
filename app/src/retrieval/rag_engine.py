@@ -18,7 +18,16 @@ class RAGEngine:
     
     def __init__(self):
         self.vector_store = VectorStore()
-        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
+        # Support different LLM providers
+        api_key = os.getenv('LLM_API_KEY') or os.getenv('OPENAI_API_KEY')
+        base_url = os.getenv('LLM_BASE_URL')  # For DeepSeek, Qwen, etc.
+        
+        if base_url:
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+        else:
+            self.client = OpenAI(api_key=api_key)
+        
         self.model = os.getenv('LLM_MODEL', 'gpt-4o-mini')
     
     def query(self, question: str, top_k: int = 5) -> Dict:

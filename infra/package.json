@@ -1,0 +1,22 @@
+{
+  "name": "defrog-infrastructure",
+  "version": "1.0.0",
+  "description": "Pulumi infrastructure for DeFrog RAG system on GCP",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "deploy": "pulumi up",
+    "preview": "pulumi preview",
+    "destroy": "pulumi destroy"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@pulumi/gcp": "^7.0.0",
+    "@pulumi/kubernetes": "^4.0.0",
+    "@pulumi/pulumi": "^3.0.0",
+    "@pulumi/docker": "^4.0.0"
+  }
+}

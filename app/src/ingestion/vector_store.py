@@ -26,8 +26,16 @@ class VectorStore:
             'user': os.getenv('POSTGRES_USER', 'postgres'),
             'password': os.getenv('POSTGRES_PASSWORD', 'postgres')
         }
-        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        self.embedding_model = "text-embedding-3-small"
+        # Support different embedding providers
+        api_key = os.getenv('EMBEDDING_API_KEY') or os.getenv('OPENAI_API_KEY')
+        base_url = os.getenv('EMBEDDING_BASE_URL')  # For custom providers
+        
+        if base_url:
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+        else:
+            self.client = OpenAI(api_key=api_key)
+        
+        self.embedding_model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
     
     def get_connection(self):
         """Get database connection"""

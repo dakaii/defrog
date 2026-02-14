@@ -167,6 +167,32 @@ async def get_quality_metrics():
     }
 
 
+# RAG evaluation endpoint
+@app.post("/evaluate")
+async def evaluate_rag_response(request: dict):
+    """
+    Evaluate a RAG response for quality metrics
+    """
+    from src.evaluation.rag_evaluator import RAGEvaluator
+    
+    evaluator = RAGEvaluator()
+    result = evaluator.evaluate(
+        query=request.get("query"),
+        answer=request.get("answer"),
+        contexts=request.get("contexts", []),
+        ground_truth=request.get("ground_truth")
+    )
+    
+    return {
+        "faithfulness": result.faithfulness,
+        "answer_relevancy": result.answer_relevancy,
+        "context_recall": result.context_recall if result.context_recall >= 0 else None,
+        "context_precision": result.context_precision,
+        "overall_score": result.overall_score,
+        "metadata": result.metadata
+    }
+
+
 # List available protocols
 @app.get("/protocols")
 async def list_protocols():

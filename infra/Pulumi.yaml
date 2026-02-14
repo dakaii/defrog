@@ -1,0 +1,15 @@
+name: defrog-infrastructure
+description: DeFrog - DeFi RAG System Infrastructure on GCP
+runtime: nodejs
+config:
+  gcp:project:
+    description: The GCP project to deploy resources to
+  gcp:region:
+    description: The GCP region to deploy resources to
+    default: us-central1
+  gcp:zone:
+    description: The GCP zone to deploy resources to
+    default: us-central1-a
+  defrog:environment:
+    description: Environment name (dev, staging, prod)
+    default: dev

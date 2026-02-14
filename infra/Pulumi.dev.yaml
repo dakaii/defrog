@@ -1,0 +1,6 @@
+config:
+  gcp:project: your-gcp-project-id
+  gcp:region: us-central1
+  gcp:zone: us-central1-a
+  defrog:environment: dev
+  kubernetes:enableDryRun: false
