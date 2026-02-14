@@ -102,22 +102,50 @@ class VectorStore:
             cur.close()
             conn.close()
     
-    def hybrid_search(self, query: str, top_k: int = 5) -> List[Dict]:
+    def hybrid_search(self, query: str, top_k: int = 5,
+                      vector_weight: float = 0.7, keyword_weight: float = 0.3) -> List[Dict]:
         """Hybrid search combining vector and keyword search"""
         query_embedding = self._generate_embedding(query)
-        
+
         conn = self.get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
+
         try:
-            # Use the hybrid search function we defined in init.sql
             cur.execute("""
-                SELECT * FROM hybrid_search(%s, %s::vector, 0.7, 0.3, %s)
-            """, (query, query_embedding, top_k))
-            
+                SELECT * FROM hybrid_search(%s, %s::vector, %s, %s, %s)
+            """, (query, query_embedding, vector_weight, keyword_weight, top_k))
+
             results = cur.fetchall()
             return results
-            
+
+        finally:
+            cur.close()
+            conn.close()
+
+    def keyword_search(self, query: str, top_k: int = 5) -> List[Dict]:
+        """Pure keyword/full-text search using PostgreSQL ts_rank"""
+        conn = self.get_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        try:
+            cur.execute("""
+                SELECT
+                    id,
+                    content,
+                    metadata,
+                    ts_rank(
+                        to_tsvector('english', content),
+                        plainto_tsquery('english', %s)
+                    ) as score
+                FROM documents
+                WHERE to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+                ORDER BY score DESC
+                LIMIT %s
+            """, (query, query, top_k))
+
+            results = cur.fetchall()
+            return results
+
         finally:
             cur.close()
             conn.close()

@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict
+from psycopg2.extras import RealDictCursor
 import os
 from dotenv import load_dotenv
 import logging
@@ -56,6 +57,7 @@ class QueryResponse(BaseModel):
     model_used: str
     latency_ms: int
     documents_retrieved: int
+    cache_hit: bool = False
 
 
 class IngestionRequest(BaseModel):
@@ -108,7 +110,8 @@ async def query_defi(request: QueryRequest):
             sources=result["sources"],
             model_used=result["model"],
             latency_ms=latency_ms,
-            documents_retrieved=result["documents_retrieved"]
+            documents_retrieved=result["documents_retrieved"],
+            cache_hit=result.get("cache_hit", False)
         )
     
     except Exception as e:
@@ -135,46 +138,110 @@ async def ingest_documents(
     }
 
 
-# Cost analytics endpoint
+def _query_db(sql: str, params: tuple = None) -> list:
+    """Execute a read query and return results as list of dicts"""
+    conn = vector_store.get_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    try:
+        cur.execute(sql, params)
+        return cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/analytics/costs")
 async def get_cost_analytics():
-    """
-    Get cost analytics and optimization metrics
-    """
-    # TODO: Query from database
-    return {
-        "total_queries": 1000,
-        "average_cost": 0.025,
-        "cache_hit_rate": 0.45,
-        "cost_reduction": 0.60,
-        "baseline_cost": 0.05,
-        "optimized_cost": 0.02
-    }
+    """Get cost analytics from query_logs table"""
+    try:
+        rows = _query_db("""
+            SELECT
+                COUNT(*) as total_queries,
+                COALESCE(AVG(cost), 0) as average_cost,
+                COALESCE(
+                    SUM(CASE WHEN cache_hit THEN 1 ELSE 0 END)::float /
+                    NULLIF(COUNT(*), 0), 0
+                ) as cache_hit_rate,
+                COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+            FROM query_logs
+        """)
+
+        row = rows[0] if rows else {}
+        total_queries = int(row.get('total_queries', 0))
+
+        if total_queries == 0:
+            return {
+                "total_queries": 0, "average_cost": 0, "cache_hit_rate": 0,
+                "avg_latency_ms": 0, "baseline_cost": 0, "optimized_cost": 0
+            }
+
+        avg_cost = float(row['average_cost'])
+        cache_hit_rate = float(row['cache_hit_rate'])
+
+        # Baseline = avg cost of non-cached queries
+        baseline_rows = _query_db("""
+            SELECT COALESCE(AVG(cost), 0) as baseline_avg
+            FROM query_logs WHERE NOT cache_hit
+        """)
+        baseline_cost = float(baseline_rows[0]['baseline_avg']) if baseline_rows else avg_cost
+
+        return {
+            "total_queries": total_queries,
+            "average_cost": round(avg_cost, 6),
+            "cache_hit_rate": round(cache_hit_rate, 4),
+            "avg_latency_ms": round(float(row['avg_latency_ms']), 1),
+            "baseline_cost": round(baseline_cost, 6),
+            "optimized_cost": round(avg_cost, 6)
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch cost analytics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch cost analytics")
 
 
-# Evaluation metrics endpoint
 @app.get("/analytics/quality")
 async def get_quality_metrics():
-    """
-    Get quality metrics from evaluations
-    """
-    # TODO: Query from database
-    return {
-        "faithfulness": 0.87,
-        "answer_relevancy": 0.89,
-        "context_recall": 0.85,
-        "evaluations_run": 500
-    }
+    """Get quality metrics from evaluation_results table"""
+    try:
+        rows = _query_db("""
+            SELECT
+                COUNT(*) as evaluations_run,
+                COALESCE(AVG(faithfulness), 0) as faithfulness,
+                COALESCE(AVG(answer_relevancy), 0) as answer_relevancy,
+                COALESCE(AVG(context_recall), 0) as context_recall
+            FROM evaluation_results
+        """)
+
+        row = rows[0] if rows else {}
+        evaluations_run = int(row.get('evaluations_run', 0))
+
+        if evaluations_run == 0:
+            return {
+                "faithfulness": 0, "answer_relevancy": 0,
+                "context_recall": 0, "evaluations_run": 0
+            }
+
+        return {
+            "faithfulness": round(float(row['faithfulness']), 4),
+            "answer_relevancy": round(float(row['answer_relevancy']), 4),
+            "context_recall": round(float(row['context_recall']), 4),
+            "evaluations_run": evaluations_run
+        }
+    except Exception as e:
+        logger.error(f"Failed to fetch quality metrics: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch quality metrics")
 
 
-# RAG evaluation endpoint
+@app.get("/analytics/cache")
+async def get_cache_stats():
+    """Get live query cache performance statistics"""
+    return rag_engine.optimizer.query_cache.get_stats()
+
+
 @app.post("/evaluate")
 async def evaluate_rag_response(request: dict):
-    """
-    Evaluate a RAG response for quality metrics
-    """
+    """Evaluate a RAG response and store results in database"""
     from src.evaluation.rag_evaluator import RAGEvaluator
-    
+
     evaluator = RAGEvaluator()
     result = evaluator.evaluate(
         query=request.get("query"),
@@ -182,7 +249,37 @@ async def evaluate_rag_response(request: dict):
         contexts=request.get("contexts", []),
         ground_truth=request.get("ground_truth")
     )
-    
+
+    # Store in database
+    conn = None
+    cur = None
+    try:
+        conn = vector_store.get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO evaluation_results
+                (experiment_name, query_text, ground_truth, predicted_answer,
+                 faithfulness, answer_relevancy, context_recall, cost)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            request.get("experiment_name", "api_evaluation"),
+            request.get("query"),
+            request.get("ground_truth"),
+            request.get("answer"),
+            result.faithfulness,
+            result.answer_relevancy,
+            result.context_recall if result.context_recall >= 0 else None,
+            0
+        ))
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to store evaluation result: {e}")
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
     return {
         "faithfulness": result.faithfulness,
         "answer_relevancy": result.answer_relevancy,
