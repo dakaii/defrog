@@ -160,7 +160,7 @@ initialize_database() {
                 PROXY_PID=$!
                 sleep 5
                 
-                PGPASSWORD="defrog-db-password" psql \
+                PGPASSWORD="${DB_PASSWORD:?Set DB_PASSWORD env var}" psql \
                     -h localhost \
                     -U defrog \
                     -d defrog \

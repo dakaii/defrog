@@ -91,7 +91,7 @@ const database = new gcp.sql.Database(`${prefix}-database`, {
 const dbUser = new gcp.sql.User(`${prefix}-db-user`, {
     name: "defrog",
     instance: dbInstance.name,
-    password: pulumi.secret("defrog-db-password"), // Change this in production
+    password: config.requireSecret("db-password"),
 });
 
 // Create GKE cluster
@@ -171,7 +171,7 @@ const openaiApiKey = new gcp.secretmanager.Secret(`${prefix}-openai-key`, {
 
 const openaiApiKeyVersion = new gcp.secretmanager.SecretVersion(`${prefix}-openai-key-version`, {
     secret: openaiApiKey.id,
-    secretData: "YOUR_OPENAI_API_KEY", // Replace with actual key
+    secretData: config.requireSecret("openai-api-key"),
 });
 
 // Create service account for workload identity

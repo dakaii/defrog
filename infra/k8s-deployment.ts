@@ -33,7 +33,8 @@ export function createK8sDeployment(config: DeploymentConfig) {
         },
     }, { provider: k8sProvider });
 
-    // Create Secret for sensitive data
+    // Create Secret for sensitive data (populated from Pulumi config)
+    const pulumiConfig = new pulumi.Config();
     const appSecret = new k8s.core.v1.Secret("defrog-secret", {
         metadata: {
             name: "defrog-secret",
@@ -41,7 +42,7 @@ export function createK8sDeployment(config: DeploymentConfig) {
         },
         type: "Opaque",
         stringData: {
-            POSTGRES_PASSWORD: "defrog-db-password", // Should be replaced with actual password
+            POSTGRES_PASSWORD: pulumiConfig.requireSecret("db-password"),
         },
     }, { provider: k8sProvider });
 

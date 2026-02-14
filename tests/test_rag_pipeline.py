@@ -172,131 +172,89 @@ class TestHybridSearch:
         )
         assert len(results) == 1
     
-    def test_vector_vs_keyword_performance(self):
-        """Compare vector-only vs hybrid search performance"""
-        # This would be an integration test with actual data
-        pass
+    def test_adaptive_weights_short_query(self):
+        """Test that short queries use balanced weights"""
+        from src.optimization.search_optimizer import HybridSearchOptimizer
+
+        optimizer = HybridSearchOptimizer(mock_vector_store)
+        weights = optimizer._get_optimal_weights("uniswap liquidity")
+        assert weights == {'vector': 0.5, 'keyword': 0.5}
+
+    def test_adaptive_weights_long_query(self):
+        """Test that long queries favour vector search"""
+        from src.optimization.search_optimizer import HybridSearchOptimizer
+
+        optimizer = HybridSearchOptimizer(mock_vector_store)
+        weights = optimizer._get_optimal_weights(
+            "how does the concentrated liquidity mechanism work in uniswap v3 protocol"
+        )
+        assert weights == {'vector': 0.75, 'keyword': 0.25}
 
 
-class TestPerformanceBenchmark:
-    """Performance benchmarking tests"""
-    
-    def test_query_latency(self, mock_openai_client):
-        """Test query response latency"""
-        with patch('src.retrieval.rag_engine.OpenAI', return_value=mock_openai_client):
-            with patch('src.ingestion.vector_store.VectorStore') as mock_store:
-                mock_store.return_value.hybrid_search.return_value = [
-                    {'content': 'Test', 'metadata': {}, 'similarity': 0.9}
-                ]
-                
-                engine = RAGEngine()
-                start_time = time.time()
-                
-                result = engine.query("Test query", top_k=5)
-                
-                latency = time.time() - start_time
-                assert latency < 2.0  # Should respond within 2 seconds
-    
-    def test_concurrent_queries(self, mock_openai_client):
-        """Test handling multiple concurrent queries"""
-        import concurrent.futures
-        
-        with patch('src.retrieval.rag_engine.OpenAI', return_value=mock_openai_client):
-            with patch('src.ingestion.vector_store.VectorStore') as mock_store:
-                mock_store.return_value.hybrid_search.return_value = [
-                    {'content': 'Test', 'metadata': {}, 'similarity': 0.9}
-                ]
-                
-                engine = RAGEngine()
-                queries = ["Query 1", "Query 2", "Query 3", "Query 4", "Query 5"]
-                
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                    start_time = time.time()
-                    futures = [executor.submit(engine.query, q) for q in queries]
-                    results = [f.result() for f in concurrent.futures.as_completed(futures)]
-                    total_time = time.time() - start_time
-                
-                assert len(results) == 5
-                assert total_time < 5.0  # Should handle 5 concurrent queries in < 5s
-    
-    def test_memory_usage(self):
-        """Test memory usage stays within bounds"""
-        import psutil
-        import os
-        
-        process = psutil.Process(os.getpid())
-        initial_memory = process.memory_info().rss / 1024 / 1024  # MB
-        
-        # Simulate heavy load
-        large_contexts = ["x" * 10000 for _ in range(100)]
-        
-        final_memory = process.memory_info().rss / 1024 / 1024  # MB
-        memory_increase = final_memory - initial_memory
-        
-        assert memory_increase < 500  # Should not increase by more than 500MB
+class TestQueryCache:
+    """Test suite for query caching"""
+
+    def test_cache_hit_and_miss(self):
+        """Test that cache returns results on hit and None on miss"""
+        from src.optimization.search_optimizer import QueryCache
+
+        cache = QueryCache(max_size=10, ttl_seconds=3600)
+        assert cache.get("test") is None
+        assert cache.get_stats()['misses'] == 1
+
+        cache.set("test", [{"id": 1}])
+        result = cache.get("test")
+        assert result == [{"id": 1}]
+        assert cache.get_stats()['hits'] == 1
+
+    def test_cache_lru_eviction(self):
+        """Test that LRU eviction works when cache is full"""
+        from src.optimization.search_optimizer import QueryCache
+
+        cache = QueryCache(max_size=2, ttl_seconds=3600)
+        cache.set("a", [1])
+        cache.set("b", [2])
+        cache.set("c", [3])  # Should evict "a"
+
+        assert cache.get("a") is None  # evicted
+        assert cache.get("c") == [3]
+
+    def test_cache_ttl_expiry(self):
+        """Test that expired entries are not returned"""
+        from src.optimization.search_optimizer import QueryCache
+
+        cache = QueryCache(max_size=10, ttl_seconds=0)  # 0s TTL = instant expiry
+        cache.set("test", [1])
+
+        # Entry should be expired immediately
+        result = cache.get("test")
+        assert result is None
 
 
-class TestCostOptimization:
-    """Test suite for cost optimization features"""
-    
-    def test_response_caching(self):
-        """Test that identical queries use cached responses"""
-        # This would test if we implement a caching layer
-        pass
-    
-    def test_token_counting(self, mock_openai_client):
-        """Test accurate token counting for cost estimation"""
-        import tiktoken
-        
-        encoding = tiktoken.encoding_for_model("gpt-4")
-        test_text = "How does Uniswap liquidity provision work?"
-        token_count = len(encoding.encode(test_text))
-        
-        assert token_count > 0
-        assert token_count < 100  # Reasonable for this query
+class TestSearchResultConversion:
+    """Test SearchResult to dict conversion for RAGEngine compatibility"""
 
+    def test_search_results_to_dicts(self):
+        """Test that SearchResult objects convert to RAGEngine-compatible dicts"""
+        from src.optimization.search_optimizer import HybridSearchOptimizer, SearchResult
 
-class TestEndToEnd:
-    """End-to-end integration tests"""
-    
-    @pytest.mark.integration
-    def test_full_rag_pipeline(self):
-        """Test complete RAG pipeline from query to evaluation"""
-        # This would be run with actual services
-        pass
-    
-    @pytest.mark.integration  
-    def test_defi_specific_queries(self):
-        """Test with actual DeFi-related queries"""
-        test_queries = [
-            "What is impermanent loss in Uniswap?",
-            "How does Aave's liquidation mechanism work?",
-            "Explain Compound's interest rate model",
-            "What are the risks of providing liquidity in Curve?"
+        store = Mock(spec=VectorStore)
+        optimizer = HybridSearchOptimizer(store)
+
+        results = [
+            SearchResult(
+                id=1, content="test content", metadata={"protocol": "Aave"},
+                vector_score=0.9, keyword_score=0.3, hybrid_score=0.72,
+                rerank_score=0.65
+            )
         ]
-        
-        # Would test with actual data
-        pass
+        dicts = optimizer.search_results_to_dicts(results)
 
-
-# Performance benchmark runner
-def run_performance_benchmark():
-    """Run performance benchmarks and generate report"""
-    results = {
-        'timestamp': time.time(),
-        'benchmarks': {}
-    }
-    
-    # Run latency test
-    latency_test = TestPerformanceBenchmark()
-    
-    # Generate report
-    with open('performance_report.json', 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    return results
+        assert len(dicts) == 1
+        assert dicts[0]['similarity'] == 0.65  # Uses rerank_score
+        assert dicts[0]['content'] == "test content"
+        assert dicts[0]['metadata']['protocol'] == "Aave"
 
 
 if __name__ == "__main__":
-    # Run tests with pytest
     pytest.main([__file__, '-v'])

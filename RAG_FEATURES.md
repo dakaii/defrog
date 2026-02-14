@@ -1,8 +1,8 @@
 # DeFrog RAG Engineering Features
 
-## Advanced RAG Capabilities Showcase
+## RAG Capabilities
 
-This project demonstrates production-ready RAG (Retrieval Augmented Generation) engineering with enterprise-grade features.
+A RAG system for DeFi protocol documentation, built with PostgreSQL/pgvector, FastAPI, and multi-LLM support.
 
 ## 🎯 Core RAG Competencies
 
@@ -38,10 +38,9 @@ Advanced search combining multiple retrieval methods:
 ```
 
 **Performance Optimizations**:
-- Cross-encoder reranking
-- Query result caching (LRU)
+- Term-overlap reranking
+- Query result caching (LRU with TTL)
 - Adaptive weight tuning from user feedback
-- Parallel search execution
 
 ### 4. **RAG Quality Evaluation**
 RAGAS-style metrics implementation:
@@ -61,41 +60,33 @@ RAGAS-style metrics implementation:
 - Batch processing support
 - Configurable model selection
 
-**Performance Monitoring**:
-- Latency tracking (p50, p95, p99)
-- Throughput metrics
-- Memory usage monitoring
-- Concurrent query handling
+**Observability**:
+- Per-query latency and token usage logged to `query_logs` table
+- Cache hit/miss tracking via `/analytics/cache`
+- Evaluation results persisted to `evaluation_results` table
+- Cost estimation per model
 
-**Scalability**:
-- Kubernetes-ready with HPA
-- Multi-replica deployments
-- Connection pooling
-- Async processing
+**Deployment**:
+- Kubernetes manifests with HPA, liveness/readiness probes
+- Pulumi IaC for GCP (Cloud SQL, GKE, Secret Manager)
+- Docker Compose for local development
 
-## 📊 Benchmarks
+## 📊 Analytics
 
-| Metric | Performance |
-|--------|------------|
-| Query Latency (p95) | < 500ms |
-| Concurrent Queries | 50+ QPS |
-| Faithfulness Score | 0.87 avg |
-| Cache Hit Rate | 45% |
-| Cost Reduction | 60% with caching |
-
-## 🧪 Comprehensive Testing
+All metrics are computed from real query and evaluation data stored in PostgreSQL:
 
 ```bash
-# Run full test suite
-pytest tests/test_rag_pipeline.py -v
+GET /analytics/costs    # Aggregated from query_logs table
+GET /analytics/quality  # Aggregated from evaluation_results table
+GET /analytics/cache    # Live in-memory cache stats
+```
 
-# Test coverage includes:
-✓ Multi-LLM provider support
-✓ Hybrid search optimization
-✓ Quality evaluation metrics
-✓ Performance benchmarks
-✓ Cost optimization
-✓ End-to-end pipeline
+Run evaluations via the `/evaluate` endpoint to populate quality metrics.
+
+## 🧪 Testing
+
+```bash
+pytest tests/test_rag_pipeline.py -v
 ```
 
 ## 🔧 API Endpoints
@@ -182,22 +173,9 @@ print(f"Overall Score: {result.overall_score}")
 └─────────────────────────────────────┘
 ```
 
-## 💡 Differentiators
-
-1. **Production-Ready**: Not just a demo - includes error handling, monitoring, and deployment configs
-2. **Multi-Provider**: Works with OpenAI, DeepSeek, Qwen out of the box
-3. **Cost-Conscious**: Built-in caching and optimization features
-4. **Quality-Focused**: Automated evaluation metrics for continuous improvement
-5. **Domain-Specific**: Specialized for DeFi/Web3 content (relevant for Hong Kong market)
-
 ## 📈 Future Enhancements
 
-- [ ] LangChain/LlamaIndex integration
-- [ ] GraphRAG for complex relationships
-- [ ] Multi-modal support (tables, charts)
-- [ ] A/B testing framework
-- [ ] AutoML for weight optimization
-
----
-
-**Built for demonstrating RAG engineering expertise for AI/ML roles**
+- [ ] Connection pooling (currently one connection per request)
+- [ ] Real cross-encoder reranking model (currently term-overlap heuristic)
+- [ ] Evaluation dataset with ground-truth answers for systematic benchmarking
+- [ ] GraphRAG for cross-protocol relationship queries

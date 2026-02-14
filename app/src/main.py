@@ -119,18 +119,54 @@ async def query_defi(request: QueryRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Ingestion endpoint
+def _run_ingestion(protocol: Optional[str], force_refresh: bool):
+    """Run the ingestion pipeline in a background task"""
+    from src.ingestion.crawler import DeFiCrawler
+    from src.ingestion.chunking import ChunkingPipeline
+
+    crawler = DeFiCrawler()
+    chunker = ChunkingPipeline(chunk_size=800, chunk_overlap=200)
+
+    # Crawl documents (filter by protocol if specified)
+    logger.info(f"Starting ingestion for: {protocol or 'all protocols'}")
+    all_docs = crawler.crawl_all()
+
+    if protocol:
+        all_docs = [d for d in all_docs if d.protocol.lower() == protocol.lower()]
+
+    if not all_docs:
+        logger.warning("No documents found to ingest")
+        return
+
+    # Chunk and store
+    if force_refresh:
+        vector_store.clear_all()
+
+    for doc in all_docs:
+        chunks = chunker.smart_chunk_text(doc.content, {
+            "protocol": doc.protocol,
+            "title": doc.title,
+            "url": doc.url,
+            "doc_type": doc.doc_type
+        })
+        batch = [{"content": c.content, "metadata": c.metadata} for c in chunks]
+        try:
+            vector_store.store_documents(batch)
+            logger.info(f"Ingested {len(batch)} chunks from {doc.title}")
+        except Exception as e:
+            logger.error(f"Failed to ingest {doc.title}: {e}")
+
+    logger.info(f"Ingestion complete. Total docs in DB: {vector_store.get_document_count()}")
+
+
 @app.post("/ingest")
 async def ingest_documents(
     request: IngestionRequest,
     background_tasks: BackgroundTasks
 ):
-    """
-    Trigger document ingestion pipeline
-    """
-    # TODO: Implement ingestion pipeline
-    # background_tasks.add_task(run_ingestion, request.protocol, request.force_refresh)
-    
+    """Trigger document ingestion pipeline in the background"""
+    background_tasks.add_task(_run_ingestion, request.protocol, request.force_refresh)
+
     return {
         "status": "ingestion_started",
         "protocol": request.protocol or "all",
