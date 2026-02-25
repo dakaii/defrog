@@ -50,8 +50,9 @@ db-init: ## Initialize database schema
 	docker-compose exec postgres psql -U postgres -d defrog -f /docker-entrypoint-initdb.d/init.sql
 
 .PHONY: db-migrate
-db-migrate: ## Run database migrations
-	docker-compose exec postgres psql -U postgres -d defrog -f /docker-entrypoint-initdb.d/init.sql
+db-migrate: ## Run v2 migration (feedback + document_sources tables)
+	docker compose cp scripts/migrate_v2.sql postgres:/tmp/migrate_v2.sql
+	docker compose exec postgres psql -U postgres -d defrog -f /tmp/migrate_v2.sql
 
 .PHONY: db-shell
 db-shell: ## Open PostgreSQL shell
@@ -66,16 +67,40 @@ ingest: ## Run document ingestion
 ingest-clear: ## Clear and re-ingest all documents
 	docker-compose exec app python scripts/ingest_defi_docs.py --clear
 
-# Testing
+# Testing & Linting
+_DEV_DEPS = pip install -q ruff pytest
+
+.PHONY: test
+test: ## Run unit tests inside Docker
+	docker compose run --rm \
+		-v "$(PWD)/tests:/app/tests" \
+		app sh -c "$(_DEV_DEPS) && python -m pytest tests/ -v"
+
+.PHONY: lint
+lint: ## Run ruff linter (check only, no changes)
+	docker compose run --rm \
+		-v "$(PWD)/pyproject.toml:/app/pyproject.toml" \
+		-v "$(PWD)/tests:/app/tests" \
+		-v "$(PWD)/dashboard:/app/dashboard" \
+		app sh -c "$(_DEV_DEPS) && /home/defrog/.local/bin/ruff check src dashboard tests"
+
+.PHONY: format
+format: ## Auto-format code with ruff (modifies files in-place)
+	docker compose run --rm \
+		-v "$(PWD)/pyproject.toml:/app/pyproject.toml" \
+		-v "$(PWD)/tests:/app/tests" \
+		-v "$(PWD)/dashboard:/app/dashboard" \
+		app sh -c "$(_DEV_DEPS) && /home/defrog/.local/bin/ruff format src dashboard tests && /home/defrog/.local/bin/ruff check --fix src dashboard tests"
+
 .PHONY: test-api
-test-api: ## Test API endpoints
+test-api: ## Smoke-test live API endpoints with curl
 	@echo "Testing health endpoint..."
 	@curl -s http://localhost:8000/health | jq .
 	@echo "\nTesting protocols endpoint..."
 	@curl -s http://localhost:8000/protocols | jq .
 
 .PHONY: test-query
-test-query: ## Test a sample query
+test-query: ## Test a sample query against the live API
 	@curl -X POST http://localhost:8000/query \
 		-H "Content-Type: application/json" \
 		-d '{"query": "How does Uniswap liquidity provision work?", "top_k": 5}' \

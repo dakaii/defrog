@@ -3,11 +3,11 @@ Search Optimization Module
 Implements hybrid search with dynamic weighting, caching, and reranking
 """
 import logging
-import numpy as np
-from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
 import time
 from collections import defaultdict
+from dataclasses import dataclass
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +30,12 @@ class SearchResult:
     """Enhanced search result with multiple scoring dimensions"""
     id: int
     content: str
-    metadata: Dict
+    metadata: dict
     vector_score: float
     keyword_score: float
     hybrid_score: float
-    rerank_score: Optional[float] = None
-    latency_ms: Optional[int] = None
+    rerank_score: float | None = None
+    latency_ms: int | None = None
 
 
 class HybridSearchOptimizer:
@@ -57,7 +57,7 @@ class HybridSearchOptimizer:
         query: str,
         top_k: int = 10,
         auto_adjust_weights: bool = True
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Perform hybrid search with adaptive weight optimization and caching.
         """
@@ -109,7 +109,7 @@ class HybridSearchOptimizer:
         """Check if the most recent query was served from cache"""
         return self._last_cache_hit
 
-    def search_results_to_dicts(self, results: List[SearchResult]) -> List[Dict]:
+    def search_results_to_dicts(self, results: list[SearchResult]) -> list[dict]:
         """Convert SearchResult objects to dicts compatible with RAGEngine"""
         return [
             {
@@ -121,7 +121,7 @@ class HybridSearchOptimizer:
             for r in results
         ]
 
-    def _vector_search(self, query: str, limit: int) -> List[Dict]:
+    def _vector_search(self, query: str, limit: int) -> list[dict]:
         """Perform vector similarity search via vector_store"""
         try:
             results = self.vector_store.search(query, top_k=limit)
@@ -138,7 +138,7 @@ class HybridSearchOptimizer:
             logger.error(f"Vector search failed: {e}")
             return []
 
-    def _keyword_search(self, query: str, limit: int) -> List[Dict]:
+    def _keyword_search(self, query: str, limit: int) -> list[dict]:
         """Perform keyword/full-text search via vector_store"""
         try:
             results = self.vector_store.keyword_search(query, top_k=limit)
@@ -157,11 +157,11 @@ class HybridSearchOptimizer:
 
     def _combine_results(
         self,
-        vector_results: List[Dict],
-        keyword_results: List[Dict],
+        vector_results: list[dict],
+        keyword_results: list[dict],
         vector_weight: float,
         keyword_weight: float
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """
         Combine vector and keyword results with weighted scoring
         """
@@ -206,7 +206,7 @@ class HybridSearchOptimizer:
         results = sorted(combined.values(), key=lambda x: x.hybrid_score, reverse=True)
         return results
 
-    def _rerank_results(self, results: List[SearchResult], query: str) -> List[SearchResult]:
+    def _rerank_results(self, results: list[SearchResult], query: str) -> list[SearchResult]:
         """
         Rerank results using a cross-encoder when available, otherwise fall back
         to term-overlap heuristic.
@@ -228,7 +228,7 @@ class HybridSearchOptimizer:
                 logits = _cross_encoder.predict(pairs)
                 # Sigmoid normalises logits to (0, 1) — higher means more relevant
                 scores = 1.0 / (1.0 + np.exp(-np.array(logits, dtype=float)))
-                for result, score in zip(results, scores):
+                for result, score in zip(results, scores, strict=True):
                     result.rerank_score = float(score)
                 logger.debug(f"Cross-encoder reranked {len(results)} results for query: {query[:60]}")
             except Exception as e:
@@ -239,7 +239,7 @@ class HybridSearchOptimizer:
 
         return sorted(results, key=lambda x: x.rerank_score, reverse=True)
 
-    def _heuristic_rerank(self, results: List[SearchResult], query: str) -> None:
+    def _heuristic_rerank(self, results: list[SearchResult], query: str) -> None:
         """Assign rerank_score in-place using term-overlap boost (fallback)."""
         for result in results:
             overlap_score = self._compute_term_overlap_boost(query, result.content)
@@ -259,7 +259,7 @@ class HybridSearchOptimizer:
         overlap = len(query_terms & doc_terms) / len(query_terms)
         return min(overlap * 1.5, 1.0)
 
-    def _get_optimal_weights(self, query: str) -> Dict[str, float]:
+    def _get_optimal_weights(self, query: str) -> dict[str, float]:
         """
         Determine optimal weights based on query characteristics.
         Short queries favour keyword search; longer queries favour vector search.
@@ -273,7 +273,7 @@ class HybridSearchOptimizer:
         else:
             return {'vector': 0.75, 'keyword': 0.25}
 
-    def _track_performance(self, query: str, results: List[SearchResult], latency_ms: int):
+    def _track_performance(self, query: str, results: list[SearchResult], latency_ms: int):
         """Track search performance for optimization"""
         self.performance_history[query[:50]].append({
             'timestamp': time.time(),
@@ -284,8 +284,8 @@ class HybridSearchOptimizer:
 
     def optimize_weights_from_feedback(
         self,
-        query_feedback: List[Tuple[str, int, bool]]
-    ) -> Dict[str, float]:
+        query_feedback: list[tuple[str, int, bool]]
+    ) -> dict[str, float]:
         """
         Optimize weights based on user feedback.
         query_feedback: List of (query, result_position, was_relevant)
@@ -314,7 +314,7 @@ class HybridSearchOptimizer:
 
         return self.optimal_weights
 
-    def generate_performance_report(self) -> Dict:
+    def generate_performance_report(self) -> dict:
         """Generate performance optimization report"""
         report = {
             'total_queries': len(self.performance_history),
@@ -357,7 +357,7 @@ class QueryCache:
         self.hits = 0
         self.misses = 0
 
-    def get(self, query: str) -> Optional[list]:
+    def get(self, query: str) -> list | None:
         """Get cached result if available and not expired"""
         if query in self.cache:
             if time.time() - self.access_times[query] < self.ttl_seconds:
@@ -381,7 +381,7 @@ class QueryCache:
         self.cache[query] = result
         self.access_times[query] = time.time()
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         """Get cache performance statistics"""
         total = self.hits + self.misses
         return {

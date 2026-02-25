@@ -1,16 +1,16 @@
 """
 Simple vector store for DeFi documents using pgvector
 """
-import os
+import contextlib
 import logging
-from typing import List, Dict, Optional
+import os
+
 import psycopg2
-import psycopg2.pool
 import psycopg2.extensions
-from psycopg2.extras import RealDictCursor
-import numpy as np
-from openai import OpenAI
+import psycopg2.pool
 from dotenv import load_dotenv
+from openai import OpenAI
+from psycopg2.extras import RealDictCursor
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -48,19 +48,16 @@ class _PooledConnection:
         """Return the connection to the pool instead of closing it."""
         conn = object.__getattribute__(self, '_conn')
         pool = object.__getattribute__(self, '_pool')
-        if not conn.closed:
+        if not conn.closed and conn.status != psycopg2.extensions.STATUS_READY:
             # Roll back any open transaction before returning to pool
-            if conn.status != psycopg2.extensions.STATUS_READY:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+            with contextlib.suppress(Exception):
+                conn.rollback()
         pool.putconn(conn)
 
 
 class VectorStore:
     """Simple vector store using PostgreSQL with pgvector"""
-    
+
     def __init__(self):
         self.conn_params = {
             'host': os.getenv('POSTGRES_HOST', 'localhost'),
@@ -105,17 +102,17 @@ class VectorStore:
         """Close the connection pool (call on app shutdown)."""
         self._pool.closeall()
         logger.info("DB connection pool closed")
-    
-    def store_documents(self, documents: List[Dict]):
+
+    def store_documents(self, documents: list[dict]):
         """Store documents with embeddings in the database"""
         conn = self.get_connection()
         cur = conn.cursor()
-        
+
         try:
             for doc in documents:
                 # Generate embedding
                 embedding = self._generate_embedding(doc['content'])
-                
+
                 # Store in database
                 cur.execute("""
                     INSERT INTO documents (content, metadata, embedding)
@@ -125,12 +122,12 @@ class VectorStore:
                     doc.get('metadata', {}),
                     embedding
                 ))
-                
+
                 logger.info(f"Stored document: {doc.get('metadata', {}).get('title', 'Unknown')}")
-            
+
             conn.commit()
             logger.info(f"Successfully stored {len(documents)} documents")
-            
+
         except Exception as e:
             logger.error(f"Error storing documents: {e}")
             conn.rollback()
@@ -138,19 +135,19 @@ class VectorStore:
         finally:
             cur.close()
             conn.close()
-    
-    def search(self, query: str, top_k: int = 5) -> List[Dict]:
+
+    def search(self, query: str, top_k: int = 5) -> list[dict]:
         """Search for relevant documents using vector similarity"""
         # Generate query embedding
         query_embedding = self._generate_embedding(query)
-        
+
         conn = self.get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
+
         try:
             # Vector similarity search
             cur.execute("""
-                SELECT 
+                SELECT
                     id,
                     content,
                     metadata,
@@ -159,16 +156,16 @@ class VectorStore:
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s
             """, (query_embedding, query_embedding, top_k))
-            
+
             results = cur.fetchall()
             return results
-            
+
         finally:
             cur.close()
             conn.close()
-    
+
     def hybrid_search(self, query: str, top_k: int = 5,
-                      vector_weight: float = 0.7, keyword_weight: float = 0.3) -> List[Dict]:
+                      vector_weight: float = 0.7, keyword_weight: float = 0.3) -> list[dict]:
         """Hybrid search combining vector and keyword search"""
         query_embedding = self._generate_embedding(query)
 
@@ -187,7 +184,7 @@ class VectorStore:
             cur.close()
             conn.close()
 
-    def keyword_search(self, query: str, top_k: int = 5) -> List[Dict]:
+    def keyword_search(self, query: str, top_k: int = 5) -> list[dict]:
         """Pure keyword/full-text search using PostgreSQL ts_rank"""
         conn = self.get_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -214,8 +211,8 @@ class VectorStore:
         finally:
             cur.close()
             conn.close()
-    
-    def _generate_embedding(self, text: str) -> List[float]:
+
+    def _generate_embedding(self, text: str) -> list[float]:
         """Generate embedding using OpenAI"""
         try:
             response = self.client.embeddings.create(
@@ -226,12 +223,12 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             raise
-    
+
     def clear_all(self):
         """Clear all documents from the database"""
         conn = self.get_connection()
         cur = conn.cursor()
-        
+
         try:
             cur.execute("TRUNCATE TABLE documents CASCADE")
             conn.commit()
@@ -239,12 +236,12 @@ class VectorStore:
         finally:
             cur.close()
             conn.close()
-    
+
     def get_document_count(self) -> int:
         """Get total number of documents"""
         conn = self.get_connection()
         cur = conn.cursor()
-        
+
         try:
             cur.execute("SELECT COUNT(*) FROM documents")
             return cur.fetchone()[0]

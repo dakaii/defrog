@@ -1,0 +1,38 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["app/src", "dashboard", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes (unused imports, undefined names, etc.)
+    "I",   # isort
+    "B",   # flake8-bugbear (common bug patterns)
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade (modernise syntax)
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+]
+ignore = [
+    "E501",   # line too long — handled by formatter
+    "B008",   # FastAPI uses function calls in default args (Depends, Security, Query)
+    "SIM108", # ternary operator — prefer explicit if/else for readability
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+# Pre-existing code: zip() calls in evaluation and chunking are always equal-length
+# by construction; strict= would add noise rather than safety here.
+[tool.ruff.lint.per-file-ignores]
+# Whitespace is inside multi-line LLM prompt f-strings — changing it
+# would alter the prompts sent to the model; leave as-is.
+"src/evaluation/rag_evaluator.py" = ["B905", "W291", "W293"]
+# Whitespace is inside a multi-line test-fixture string literal.
+"src/ingestion/chunking.py" = ["B905", "W293"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

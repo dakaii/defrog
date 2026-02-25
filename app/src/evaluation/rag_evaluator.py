@@ -2,16 +2,15 @@
 RAG Evaluation Module
 Implements RAGAS-style metrics for evaluating RAG pipeline quality
 """
-import os
 import json
 import logging
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
-from openai import OpenAI
-import numpy as np
-from datetime import datetime
-import asyncio
+import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from datetime import datetime
+
+import numpy as np
+from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,13 +21,13 @@ class EvaluationResult:
     """Container for evaluation metrics"""
     query: str
     answer: str
-    contexts: List[str]
+    contexts: list[str]
     faithfulness: float
     answer_relevancy: float
     context_recall: float
     context_precision: float
     overall_score: float
-    metadata: Dict
+    metadata: dict
     timestamp: str
 
 
@@ -37,29 +36,29 @@ class RAGEvaluator:
     Evaluates RAG pipeline performance using LLM-based metrics
     Inspired by RAGAS framework
     """
-    
-    def __init__(self, llm_client: Optional[OpenAI] = None):
+
+    def __init__(self, llm_client: OpenAI | None = None):
         """Initialize evaluator with LLM client"""
         if llm_client:
             self.client = llm_client
         else:
             api_key = os.getenv('LLM_API_KEY') or os.getenv('OPENAI_API_KEY')
             base_url = os.getenv('LLM_BASE_URL')
-            
+
             if base_url:
                 self.client = OpenAI(api_key=api_key, base_url=base_url)
             else:
                 self.client = OpenAI(api_key=api_key)
-        
+
         self.model = os.getenv('LLM_MODEL', 'gpt-4o-mini')
-    
-    def evaluate_faithfulness(self, answer: str, contexts: List[str]) -> float:
+
+    def evaluate_faithfulness(self, answer: str, contexts: list[str]) -> float:
         """
         Evaluate if the answer is faithful to the retrieved contexts
         Score: 0.0 (hallucination) to 1.0 (fully grounded)
         """
         context_text = "\n\n".join(contexts)
-        
+
         prompt = f"""You are an expert evaluator assessing RAG system faithfulness.
         
 Given the following contexts and answer, evaluate if EVERY claim in the answer 
@@ -88,9 +87,9 @@ Be strict - implications and inferences count as UNSUPPORTED unless explicitly s
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1
             )
-            
+
             evaluation = response.choices[0].message.content
-            
+
             # Extract score from response
             if "Final score:" in evaluation:
                 score_text = evaluation.split("Final score:")[-1].strip()
@@ -105,13 +104,13 @@ Be strict - implications and inferences count as UNSUPPORTED unless explicitly s
                     score = float(numbers[0]) if numbers else 0.5
             else:
                 score = 0.5  # Default if parsing fails
-            
+
             return min(max(score, 0.0), 1.0)  # Clamp between 0 and 1
-            
+
         except Exception as e:
             logger.error(f"Faithfulness evaluation failed: {e}")
             return 0.5
-    
+
     def evaluate_answer_relevancy(self, query: str, answer: str) -> float:
         """
         Evaluate if the answer is relevant to the query
@@ -142,9 +141,9 @@ Output your reasoning and then state: "SCORE: [number]" """
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1
             )
-            
+
             evaluation = response.choices[0].message.content
-            
+
             # Extract score
             import re
             score_match = re.search(r'SCORE:\s*(\d+)', evaluation)
@@ -152,20 +151,20 @@ Output your reasoning and then state: "SCORE: [number]" """
                 score = float(score_match.group(1)) / 100.0
             else:
                 score = 0.5
-            
+
             return min(max(score, 0.0), 1.0)
-            
+
         except Exception as e:
             logger.error(f"Answer relevancy evaluation failed: {e}")
             return 0.5
-    
-    def evaluate_context_recall(self, query: str, ground_truth: str, contexts: List[str]) -> float:
+
+    def evaluate_context_recall(self, query: str, ground_truth: str, contexts: list[str]) -> float:
         """
         Evaluate if retrieved contexts contain information needed for ground truth
         Score: 0.0 (missing info) to 1.0 (all info present)
         """
         context_text = "\n\n".join(contexts)
-        
+
         prompt = f"""You are evaluating context recall for a RAG system.
 
 Question: {query}
@@ -191,26 +190,26 @@ Output:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1
             )
-            
+
             evaluation = response.choices[0].message.content
-            
+
             # Count FOUND vs MISSING
             found_count = evaluation.count("FOUND")
             missing_count = evaluation.count("MISSING")
             total = found_count + missing_count
-            
+
             if total > 0:
                 score = found_count / total
             else:
                 score = 0.5
-            
+
             return min(max(score, 0.0), 1.0)
-            
+
         except Exception as e:
             logger.error(f"Context recall evaluation failed: {e}")
             return 0.5
-    
-    def evaluate_context_precision(self, query: str, contexts: List[str]) -> float:
+
+    def evaluate_context_precision(self, query: str, contexts: list[str]) -> float:
         """
         Evaluate if retrieved contexts are precise and not noisy
         Score: 0.0 (all noise) to 1.0 (all relevant)
@@ -223,26 +222,26 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
 
 """
         scores = []
-        
+
         for i, context in enumerate(contexts, 1):
             prompt += f"\nContext {i}:\n{context[:500]}...\n"
-        
+
         prompt += "\nFor each context, provide a relevance score 0-100."
-        
+
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1
             )
-            
+
             evaluation = response.choices[0].message.content
-            
+
             # Extract scores
             import re
             scores = re.findall(r'\d+', evaluation)
             scores = [min(float(s) / 100.0, 1.0) for s in scores[:len(contexts)]]
-            
+
             if scores:
                 # Weight earlier contexts more heavily (assuming ranking order)
                 weights = [1.0 / (i + 1) for i in range(len(scores))]
@@ -250,23 +249,23 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
                 return weighted_score
             else:
                 return 0.5
-                
+
         except Exception as e:
             logger.error(f"Context precision evaluation failed: {e}")
             return 0.5
-    
+
     def evaluate(
-        self, 
-        query: str, 
-        answer: str, 
-        contexts: List[str],
-        ground_truth: Optional[str] = None
+        self,
+        query: str,
+        answer: str,
+        contexts: list[str],
+        ground_truth: str | None = None
     ) -> EvaluationResult:
         """
         Run complete evaluation suite
         """
         logger.info(f"Evaluating query: {query[:50]}...")
-        
+
         # Run evaluations in parallel for speed
         with ThreadPoolExecutor(max_workers=4) as executor:
             faithfulness_future = executor.submit(
@@ -278,7 +277,7 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
             precision_future = executor.submit(
                 self.evaluate_context_precision, query, contexts
             )
-            
+
             # Context recall only if ground truth is provided
             if ground_truth:
                 recall_future = executor.submit(
@@ -287,17 +286,17 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
                 context_recall = recall_future.result()
             else:
                 context_recall = None
-            
+
             faithfulness = faithfulness_future.result()
             answer_relevancy = relevancy_future.result()
             context_precision = precision_future.result()
-        
+
         # Calculate overall score
         scores = [faithfulness, answer_relevancy, context_precision]
         if context_recall is not None:
             scores.append(context_recall)
         overall_score = np.mean(scores)
-        
+
         result = EvaluationResult(
             query=query,
             answer=answer,
@@ -314,21 +313,21 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
             },
             timestamp=datetime.now().isoformat()
         )
-        
+
         logger.info(f"Evaluation complete. Overall score: {overall_score:.2f}")
         return result
-    
+
     def evaluate_batch(
-        self, 
-        test_cases: List[Dict]
-    ) -> Tuple[List[EvaluationResult], Dict]:
+        self,
+        test_cases: list[dict]
+    ) -> tuple[list[EvaluationResult], dict]:
         """
         Evaluate multiple test cases and provide aggregate metrics
         
         test_cases: List of dicts with keys: query, answer, contexts, ground_truth (optional)
         """
         results = []
-        
+
         for case in test_cases:
             result = self.evaluate(
                 query=case['query'],
@@ -337,7 +336,7 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
                 ground_truth=case.get('ground_truth')
             )
             results.append(result)
-        
+
         # Calculate aggregate metrics
         aggregate = {
             'num_evaluations': len(results),
@@ -347,15 +346,15 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
             'avg_overall_score': np.mean([r.overall_score for r in results]),
             'std_overall_score': np.std([r.overall_score for r in results])
         }
-        
+
         # Add context recall if available
         recall_scores = [r.context_recall for r in results if r.context_recall >= 0]
         if recall_scores:
             aggregate['avg_context_recall'] = np.mean(recall_scores)
-        
+
         return results, aggregate
-    
-    def generate_report(self, results: List[EvaluationResult], output_path: str = "rag_evaluation_report.json"):
+
+    def generate_report(self, results: list[EvaluationResult], output_path: str = "rag_evaluation_report.json"):
         """Generate evaluation report"""
         report = {
             'timestamp': datetime.now().isoformat(),
@@ -380,9 +379,9 @@ Rate each context for relevance to the question (0=irrelevant, 1=highly relevant
                 'max_overall_score': max(r.overall_score for r in results)
             }
         }
-        
+
         with open(output_path, 'w') as f:
             json.dump(report, f, indent=2)
-        
+
         logger.info(f"Evaluation report saved to {output_path}")
         return report
