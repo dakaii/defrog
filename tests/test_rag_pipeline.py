@@ -2,24 +2,21 @@
 Comprehensive RAG Pipeline Tests
 Tests for verifying RAG quality, performance, and multi-LLM support
 """
-import pytest
-import os
-import time
-import json
-from typing import Dict, List
-import numpy as np
-from unittest.mock import Mock, patch, MagicMock
 import sys
+from unittest.mock import Mock, patch
+
+import pytest
+
 sys.path.append('/app')
 
-from src.retrieval.rag_engine import RAGEngine
+from src.evaluation.rag_evaluator import EvaluationResult, RAGEvaluator
 from src.ingestion.vector_store import VectorStore
-from src.evaluation.rag_evaluator import RAGEvaluator, EvaluationResult
+from src.retrieval.rag_engine import RAGEngine
 
 
 class TestMultiLLMSupport:
     """Test suite for multi-LLM provider support"""
-    
+
     @pytest.fixture
     def mock_openai_client(self):
         """Mock OpenAI client for testing"""
@@ -28,48 +25,50 @@ class TestMultiLLMSupport:
         mock_response.choices = [Mock(message=Mock(content="Test answer from Uniswap docs"))]
         mock_client.chat.completions.create.return_value = mock_response
         return mock_client
-    
+
     def test_openai_initialization(self, monkeypatch):
         """Test RAG engine initializes with OpenAI"""
         monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
         monkeypatch.delenv('LLM_BASE_URL', raising=False)
-        
+
         with patch('src.retrieval.rag_engine.OpenAI') as mock_openai:
-            engine = RAGEngine()
-            mock_openai.assert_called_once_with(api_key='test-key')
-    
+            RAGEngine()
+            mock_openai.assert_called_once_with(api_key='test-key', timeout=30.0)
+
     def test_deepseek_initialization(self, monkeypatch):
         """Test RAG engine initializes with DeepSeek"""
         monkeypatch.setenv('LLM_API_KEY', 'deepseek-key')
         monkeypatch.setenv('LLM_BASE_URL', 'https://api.deepseek.com/v1')
         monkeypatch.setenv('LLM_MODEL', 'deepseek-chat')
-        
+
         with patch('src.retrieval.rag_engine.OpenAI') as mock_openai:
             engine = RAGEngine()
             mock_openai.assert_called_once_with(
                 api_key='deepseek-key',
-                base_url='https://api.deepseek.com/v1'
+                base_url='https://api.deepseek.com/v1',
+                timeout=30.0
             )
             assert engine.model == 'deepseek-chat'
-    
+
     def test_qwen_initialization(self, monkeypatch):
         """Test RAG engine initializes with Qwen"""
         monkeypatch.setenv('LLM_API_KEY', 'dashscope-key')
         monkeypatch.setenv('LLM_BASE_URL', 'https://dashscope.aliyuncs.com/compatible-mode/v1')
         monkeypatch.setenv('LLM_MODEL', 'qwen-max')
-        
+
         with patch('src.retrieval.rag_engine.OpenAI') as mock_openai:
             engine = RAGEngine()
             mock_openai.assert_called_once_with(
                 api_key='dashscope-key',
-                base_url='https://dashscope.aliyuncs.com/compatible-mode/v1'
+                base_url='https://dashscope.aliyuncs.com/compatible-mode/v1',
+                timeout=30.0
             )
             assert engine.model == 'qwen-max'
 
 
 class TestRAGQuality:
     """Test suite for RAG quality metrics"""
-    
+
     @pytest.fixture
     def sample_rag_output(self):
         """Sample RAG output for testing"""
@@ -82,14 +81,14 @@ class TestRAGQuality:
                 'This concentration leads to higher capital efficiency compared to V2.'
             ]
         }
-    
+
     @pytest.fixture
     def mock_evaluator(self):
         """Mock evaluator for testing"""
         with patch('src.evaluation.rag_evaluator.OpenAI'):
             evaluator = RAGEvaluator()
             return evaluator
-    
+
     def test_faithfulness_evaluation(self, mock_evaluator, sample_rag_output):
         """Test faithfulness scoring"""
         with patch.object(mock_evaluator.client.chat.completions, 'create') as mock_create:
@@ -100,15 +99,15 @@ class TestRAGQuality:
                 Final score: 2/2
                 """))]
             )
-            
+
             score = mock_evaluator.evaluate_faithfulness(
                 sample_rag_output['answer'],
                 sample_rag_output['contexts']
             )
-            
+
             assert 0 <= score <= 1
             assert score == 1.0  # All claims supported
-    
+
     def test_answer_relevancy_evaluation(self, mock_evaluator, sample_rag_output):
         """Test answer relevancy scoring"""
         with patch.object(mock_evaluator.client.chat.completions, 'create') as mock_create:
@@ -118,60 +117,62 @@ class TestRAGQuality:
                 SCORE: 85
                 """))]
             )
-            
+
             score = mock_evaluator.evaluate_answer_relevancy(
                 sample_rag_output['query'],
                 sample_rag_output['answer']
             )
-            
+
             assert 0 <= score <= 1
             assert score == 0.85
-    
+
     def test_complete_evaluation(self, mock_evaluator, sample_rag_output):
         """Test complete evaluation pipeline"""
-        with patch.object(mock_evaluator, 'evaluate_faithfulness', return_value=0.9):
-            with patch.object(mock_evaluator, 'evaluate_answer_relevancy', return_value=0.85):
-                with patch.object(mock_evaluator, 'evaluate_context_precision', return_value=0.8):
-                    result = mock_evaluator.evaluate(
-                        query=sample_rag_output['query'],
-                        answer=sample_rag_output['answer'],
-                        contexts=sample_rag_output['contexts']
-                    )
-                    
-                    assert isinstance(result, EvaluationResult)
-                    assert result.faithfulness == 0.9
-                    assert result.answer_relevancy == 0.85
-                    assert result.context_precision == 0.8
-                    assert 0.8 <= result.overall_score <= 0.9
+        with (
+            patch.object(mock_evaluator, 'evaluate_faithfulness', return_value=0.9),
+            patch.object(mock_evaluator, 'evaluate_answer_relevancy', return_value=0.85),
+            patch.object(mock_evaluator, 'evaluate_context_precision', return_value=0.8),
+        ):
+            result = mock_evaluator.evaluate(
+                query=sample_rag_output['query'],
+                answer=sample_rag_output['answer'],
+                contexts=sample_rag_output['contexts']
+            )
+
+            assert isinstance(result, EvaluationResult)
+            assert result.faithfulness == 0.9
+            assert result.answer_relevancy == 0.85
+            assert result.context_precision == 0.8
+            assert 0.8 <= result.overall_score <= 0.9
 
 
 class TestHybridSearch:
     """Test suite for hybrid search optimization"""
-    
+
     @pytest.fixture
     def mock_vector_store(self):
         """Mock vector store for testing"""
         store = Mock(spec=VectorStore)
         return store
-    
+
     def test_hybrid_search_weighting(self, mock_vector_store):
         """Test hybrid search uses correct weighting"""
         mock_vector_store.hybrid_search.return_value = [
             {'content': 'Test content', 'similarity': 0.85, 'metadata': {}}
         ]
-        
+
         # Test with custom weights
         results = mock_vector_store.hybrid_search(
             query="test query",
             top_k=5
         )
-        
+
         mock_vector_store.hybrid_search.assert_called_once_with(
             query="test query",
             top_k=5
         )
         assert len(results) == 1
-    
+
     def test_adaptive_weights_short_query(self, mock_vector_store):
         """Test that short queries use balanced weights"""
         from src.optimization.search_optimizer import HybridSearchOptimizer

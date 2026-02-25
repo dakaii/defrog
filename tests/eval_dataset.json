@@ -1,0 +1,224 @@
+[
+  {
+    "id": 1,
+    "protocol": "Uniswap V3",
+    "query": "How does concentrated liquidity work in Uniswap V3?",
+    "ground_truth": "In Uniswap V3, liquidity providers can concentrate their capital within custom price ranges instead of providing liquidity across the full [0, ∞) range. Each position is represented as a range [Pa, Pb] where Pa and Pb are the lower and upper price tick boundaries. Capital within the active range earns fees proportional to its share of the liquidity; capital outside the active range earns nothing. This leads to much higher capital efficiency compared to V2.",
+    "contexts": [
+      "Uniswap V3 introduces concentrated liquidity, allowing LPs to allocate capital to specific price ranges.",
+      "In V3, a position is defined by a price range [tick_lower, tick_upper]. Liquidity only earns fees when the current price is within the range.",
+      "Capital efficiency in V3 can be up to 4000x compared to V2 for stable pairs trading near peg."
+    ]
+  },
+  {
+    "id": 2,
+    "protocol": "Uniswap V2",
+    "query": "What is the constant product formula used by Uniswap V2?",
+    "ground_truth": "Uniswap V2 uses the constant product market maker formula x * y = k, where x and y are the reserves of the two tokens in the pool and k is a constant. Any trade changes the ratio of x and y while keeping their product constant (minus fees). This formula ensures that liquidity is always available for any trade size, though large trades experience significant price impact.",
+    "contexts": [
+      "Uniswap V2 AMM uses the invariant x * y = k where x and y are token reserves.",
+      "Each swap adjusts reserves such that their product remains constant, minus the 0.3% fee retained in the pool.",
+      "The constant product formula guarantees liquidity at every price but results in price slippage for large trades."
+    ]
+  },
+  {
+    "id": 3,
+    "protocol": "Aave V2",
+    "query": "How does Aave's liquidation mechanism work?",
+    "ground_truth": "In Aave V2, a position becomes eligible for liquidation when its Health Factor drops below 1. The Health Factor is calculated as the sum of (collateral value × liquidation threshold) divided by the total debt. A liquidator can repay up to 50% of a borrower's debt (the close factor) and receive the corresponding collateral plus a liquidation bonus (typically 5–15%) as an incentive.",
+    "contexts": [
+      "Aave uses a Health Factor to determine liquidation eligibility; HF < 1 triggers liquidation.",
+      "Liquidators repay part of the debt and receive collateral at a discount defined by the liquidation bonus.",
+      "The close factor in Aave V2 is 50%, meaning a liquidator can repay at most half the outstanding debt in a single transaction."
+    ]
+  },
+  {
+    "id": 4,
+    "protocol": "Aave V2",
+    "query": "What is the difference between aTokens and debt tokens in Aave?",
+    "ground_truth": "aTokens are interest-bearing tokens minted 1:1 when a user deposits an asset into Aave. They accrue interest in real time directly in the holder's wallet. Debt tokens (stable and variable) represent borrowing positions and accrue interest on the debt side. Stable debt tokens track debt at a fixed rate; variable debt tokens track debt at a floating rate that adjusts based on pool utilisation.",
+    "contexts": [
+      "When depositing to Aave, users receive aTokens that represent their share of the liquidity pool and accrue interest over time.",
+      "Aave issues two types of debt tokens: stable debt tokens (fixed rate) and variable debt tokens (floating rate).",
+      "aTokens and debt tokens are non-transferable by default; they are burned when the deposit is withdrawn or debt is repaid."
+    ]
+  },
+  {
+    "id": 5,
+    "protocol": "Compound",
+    "query": "How does Compound's interest rate model work?",
+    "ground_truth": "Compound uses a utilisation-rate-based interest rate model. The utilisation rate U = total borrows / total supply. Below a 'kink' utilisation level the borrow rate increases linearly and slowly; above the kink it increases steeply to incentivise repayments. Supply rates are derived from borrow rates multiplied by utilisation and adjusted for a reserve factor. COMP governance tokens are distributed to both suppliers and borrowers as additional incentive.",
+    "contexts": [
+      "Compound's interest rates are determined algorithmically based on the utilisation rate of each market.",
+      "The jump-rate model has a kink point; above it the slope of the borrow rate curve increases sharply.",
+      "The supply interest rate is calculated as: borrow_rate × utilisation × (1 - reserve_factor)."
+    ]
+  },
+  {
+    "id": 6,
+    "protocol": "Compound",
+    "query": "What are cTokens and how do they accrue interest?",
+    "ground_truth": "cTokens (e.g. cDAI, cETH) are ERC-20 tokens minted when a user supplies an asset to Compound. Their exchange rate against the underlying asset increases over time as interest accrues, meaning the cToken:underlying ratio grows monotonically. Users redeem cTokens to recover their principal plus interest. The exchange rate is calculated as (totalCash + totalBorrows - totalReserves) / totalSupply of cTokens.",
+    "contexts": [
+      "Supplying assets to Compound mints cTokens at the current exchange rate.",
+      "The cToken exchange rate increases every Ethereum block as interest accrues to the pool.",
+      "To withdraw, users redeem cTokens and receive the underlying asset at the new (higher) exchange rate."
+    ]
+  },
+  {
+    "id": 7,
+    "protocol": "MakerDAO",
+    "query": "How does MakerDAO maintain DAI's peg to USD?",
+    "ground_truth": "MakerDAO maintains DAI's $1 peg through several mechanisms: (1) Collateralised Debt Positions (CDPs/Vaults) require over-collateralisation, providing a buffer. (2) The Stability Fee (interest on DAI debt) can be adjusted by MKR governance to influence DAI supply and demand. (3) The DAI Savings Rate (DSR) lets users lock DAI to earn interest, affecting DAI demand. (4) Liquidations of undercollateralised vaults reduce DAI supply. (5) The Peg Stability Module (PSM) allows 1:1 swaps between DAI and approved stablecoins.",
+    "contexts": [
+      "DAI is minted by locking collateral in a Vault and drawing DAI against it at a minimum collateral ratio.",
+      "The Stability Fee is an annualised interest rate charged on outstanding DAI; governance adjusts it to expand or contract supply.",
+      "The DAI Savings Rate (DSR) allows DAI holders to earn yield, increasing demand and supporting the peg.",
+      "The Peg Stability Module (PSM) enables 1:1 conversions between DAI and USDC, providing a hard floor."
+    ]
+  },
+  {
+    "id": 8,
+    "protocol": "MakerDAO",
+    "query": "What is the role of MKR token in MakerDAO governance?",
+    "ground_truth": "MKR is the governance token of MakerDAO. MKR holders vote on risk parameters such as collateral types, debt ceilings, stability fees, and liquidation ratios. MKR is also a recapitalisation mechanism: if the protocol incurs bad debt (system deficit), new MKR is minted and auctioned for DAI to cover the shortfall, diluting existing holders. Conversely, surplus DAI is used to buy back and burn MKR, reducing supply.",
+    "contexts": [
+      "MKR token holders govern MakerDAO by voting on protocol parameters via Executive Votes and Governance Polls.",
+      "In the event of undercollateralisation, MakerDAO mints new MKR to recapitalise the system through a debt auction.",
+      "Surplus DAI above the system surplus buffer is used to purchase and burn MKR, reducing total supply."
+    ]
+  },
+  {
+    "id": 9,
+    "protocol": "Curve Finance",
+    "query": "What is the StableSwap invariant used by Curve Finance?",
+    "ground_truth": "Curve Finance uses the StableSwap invariant, which combines the constant sum (x + y = k) and constant product (x * y = k) formulas via an amplification coefficient A. The full invariant is: A * n^n * sum(x_i) + D = A * D * n^n + D^(n+1) / (n^n * prod(x_i)), where D is the invariant value, n is the number of tokens, and A controls the trade-off between the two curves. High A makes the curve behave like constant-sum (low slippage near peg); low A makes it behave like constant-product.",
+    "contexts": [
+      "Curve's StableSwap combines a constant sum and constant product invariant with an amplification parameter A.",
+      "The amplification coefficient A determines how flat the bonding curve is near equal token ratios.",
+      "Higher A values reduce slippage for stablecoin swaps near peg but increase price impact when the pool becomes imbalanced."
+    ]
+  },
+  {
+    "id": 10,
+    "protocol": "Curve Finance",
+    "query": "How does Curve's veCRV voting escrow system work?",
+    "ground_truth": "Users lock CRV tokens for 1 to 4 years to receive veCRV (vote-escrowed CRV). veCRV is non-transferable and decays linearly to zero as the lock expires. veCRV grants three benefits: (1) governance voting power proportional to veCRV balance, (2) boosted CRV rewards (up to 2.5×) on Curve liquidity, and (3) a share of 50% of all protocol trading fees distributed as 3CRV (the Curve 3pool LP token).",
+    "contexts": [
+      "CRV can be locked in the voting escrow contract for up to 4 years to receive veCRV.",
+      "veCRV decays linearly over the lock duration; users can re-lock to maintain their balance.",
+      "Holding veCRV grants a boost of up to 2.5× on CRV emissions for liquidity provided in Curve pools.",
+      "50% of Curve trading fees are converted to 3CRV and distributed weekly to veCRV holders."
+    ]
+  },
+  {
+    "id": 11,
+    "protocol": "Balancer",
+    "query": "How does Balancer's weighted pool formula differ from Uniswap's constant product?",
+    "ground_truth": "Balancer generalises the constant product formula to pools with arbitrary token weights. The invariant is V = prod(B_i ^ W_i) where B_i is the balance of token i and W_i is its normalised weight (sum of all weights = 1). Uniswap V2 is a special case with two tokens each at 50% weight. Balancer allows pools with 2–8 tokens at any weight distribution (e.g. 80/20 ETH/USDC), enabling weighted index-like exposure with automated rebalancing.",
+    "contexts": [
+      "Balancer's invariant is the weighted product: V = B1^W1 * B2^W2 * ... * Bn^Wn.",
+      "Unlike Uniswap's 50/50 pools, Balancer supports custom token weights summing to 100%.",
+      "An 80/20 ETH/USDC pool on Balancer provides mostly ETH exposure while still earning fees from both tokens."
+    ]
+  },
+  {
+    "id": 12,
+    "protocol": "Balancer",
+    "query": "What are Balancer's flash loans and how are they used?",
+    "ground_truth": "Balancer V2 offers permissionless flash loans that allow users to borrow any amount of tokens from the Vault in a single transaction, provided the loan is repaid (plus a small fee) within the same transaction. Flash loans are used for arbitrage across DEXs, collateral swaps, self-liquidation, and liquidating positions on lending protocols. The fee is set by governance (currently 0%) and goes to Balancer LPs.",
+    "contexts": [
+      "Balancer V2 introduced a unified Vault architecture that holds all pool assets, enabling efficient flash loans.",
+      "Flash loans from Balancer require repayment within the same transaction; failure reverts the entire transaction.",
+      "Common flash loan use cases include arbitrage, self-liquidation, and collateral swaps without upfront capital."
+    ]
+  },
+  {
+    "id": 13,
+    "protocol": "Synthetix",
+    "query": "How does Synthetix's debt pool model work?",
+    "ground_truth": "In Synthetix, all SNX stakers collectively own a share of the total system debt (the 'debt pool'). When a staker mints sUSD, they incur a debt equal to the minted amount. The total debt pool value changes as the prices of all outstanding Synths fluctuate. Each staker's debt obligation = their initial debt × (current total debt / total debt at time of minting). This means stakers share the gains and losses of all synthetic assets in the system, requiring active management to avoid accumulating more debt than their collateral covers.",
+    "contexts": [
+      "Synthetix uses a shared debt pool: all stakers are collectively responsible for the total value of all outstanding Synths.",
+      "Minting sUSD increases a staker's debt; the debt fluctuates with the performance of all Synths in the system.",
+      "Stakers can use the debt hedging tool or hold a basket of Synths to neutralise their exposure to debt pool fluctuations."
+    ]
+  },
+  {
+    "id": 14,
+    "protocol": "Synthetix",
+    "query": "What is the role of SNX staking in Synthetix?",
+    "ground_truth": "SNX stakers act as the collateral backing all synthetic assets (Synths). By staking SNX and maintaining a collateral ratio above the minimum (e.g. 400%), stakers can mint sUSD. In return they earn two rewards: (1) a share of exchange fees generated when traders swap between Synths, and (2) SNX inflationary staking rewards. Stakers must actively manage their collateral ratio; if it falls below the target they cannot claim rewards and may be liquidated.",
+    "contexts": [
+      "SNX stakers provide the collateral that backs all Synths; the minimum collateral ratio is set by governance.",
+      "Staking rewards consist of exchange fees (in sUSD) and inflationary SNX rewards distributed weekly.",
+      "If a staker's collateral ratio falls below the liquidation ratio and is not restored within a grace period, their SNX can be liquidated."
+    ]
+  },
+  {
+    "id": 15,
+    "protocol": "Uniswap V3",
+    "query": "What are ticks in Uniswap V3 and how do they determine price ranges?",
+    "ground_truth": "Uniswap V3 discretises the price space using ticks. Each tick corresponds to a price p = 1.0001^tick, so consecutive ticks are 0.01% apart. Liquidity providers select a lower tick and an upper tick to define their price range. When the pool price crosses a tick boundary, the liquidity at that tick is activated or deactivated. The minimum tick spacing depends on the pool's fee tier: 1 for 0.01%, 10 for 0.05%, 60 for 0.3%, and 200 for 1% fee pools.",
+    "contexts": [
+      "In Uniswap V3, price is discretised into ticks where price(tick) = 1.0001^tick.",
+      "LPs choose a [tickLower, tickUpper] range; their liquidity is only active when the pool price is within this range.",
+      "Tick spacing varies by fee tier: tighter spacing (more granular ranges) is available for lower-fee stable pools."
+    ]
+  },
+  {
+    "id": 16,
+    "protocol": "Aave V2",
+    "query": "What is the flash loan mechanism in Aave and how does it work?",
+    "ground_truth": "Aave flash loans allow any user to borrow any available amount of assets from the protocol within a single transaction, with no upfront collateral. The borrowed amount plus a 0.09% fee must be returned before the transaction ends; if not, the entire transaction is reverted. Flash loans are commonly used for arbitrage, collateral swaps, self-liquidation, and liquidating under-collateralised positions.",
+    "contexts": [
+      "Aave flash loans are uncollateralised loans that must be repaid within the same Ethereum transaction.",
+      "The flash loan fee is 0.09% of the borrowed amount, distributed to aToken holders as yield.",
+      "If the flash loan is not repaid with fee before the transaction closes, the entire operation is reverted by the smart contract."
+    ]
+  },
+  {
+    "id": 17,
+    "protocol": "Compound",
+    "query": "How does COMP token distribution work in Compound?",
+    "ground_truth": "COMP is distributed to both suppliers and borrowers in each Compound market, proportional to the interest generated in that market relative to all markets. Each market has a COMP speed (tokens per Ethereum block). Within a market, COMP is split 50/50 between suppliers and borrowers, allocated in proportion to each user's share of the market's total interest. Users can claim accumulated COMP at any time.",
+    "contexts": [
+      "COMP is distributed continuously to all Compound users who are supplying or borrowing in active markets.",
+      "Each market has a COMP speed parameter (COMP per block) set by governance; high-activity markets typically have higher speeds.",
+      "Within a market, half the COMP goes to suppliers and half to borrowers, allocated pro-rata by interest generated."
+    ]
+  },
+  {
+    "id": 18,
+    "protocol": "Curve Finance",
+    "query": "What are Curve's gauge weights and how do they affect CRV emissions?",
+    "ground_truth": "Curve uses a gauge system to direct CRV emissions to liquidity pools. Each pool has a gauge contract that tracks LP deposits. veCRV holders vote weekly on gauge weights (the fraction of total CRV emissions each gauge receives). A pool with a higher gauge weight receives more CRV per unit of liquidity, making it more attractive to LPs. Protocols compete to direct emissions to their pools by accumulating veCRV or bribing veCRV holders.",
+    "contexts": [
+      "Curve gauge weights determine what fraction of weekly CRV emissions each liquidity pool receives.",
+      "veCRV holders vote on gauge weights every week; their voting power is proportional to their veCRV balance.",
+      "Protocols seeking deep Curve liquidity often acquire veCRV or offer bribes to veCRV holders to direct emissions to their pools."
+    ]
+  },
+  {
+    "id": 19,
+    "protocol": "Uniswap V2",
+    "query": "How do liquidity providers earn fees in Uniswap V2?",
+    "ground_truth": "In Uniswap V2, every swap incurs a 0.30% fee that is added directly to the pool reserves (not paid out immediately). As reserves grow from accumulated fees, each LP token represents a larger share of the underlying assets. When an LP burns their LP tokens to withdraw liquidity, they receive their proportional share of both token reserves including all accrued fees. There is no separate fee collection step — the fee is automatically compounded into the LP position.",
+    "contexts": [
+      "Uniswap V2 charges a 0.30% fee on every swap, which is retained in the pool and increases reserves.",
+      "LP tokens represent a proportional claim on the pool's reserves; their value grows as fees accumulate.",
+      "Fees are realised when LPs redeem their LP tokens for the underlying assets."
+    ]
+  },
+  {
+    "id": 20,
+    "protocol": "Balancer",
+    "query": "What is impermanent loss and how does Balancer's weighted pool design mitigate it?",
+    "ground_truth": "Impermanent loss (IL) occurs when the price ratio of pooled assets diverges from the ratio at deposit, leaving the LP worse off than simply holding the assets. In a 50/50 pool the AMM rebalances by selling the appreciating asset, causing IL. Balancer's weighted pools (e.g. 80/20) reduce IL for the higher-weighted asset because less of it is sold during rebalancing. An 80% weight in ETH means only 20% of the pool is exposed to rebalancing relative to ETH, so ETH price appreciation causes less IL than in a 50/50 pool.",
+    "contexts": [
+      "Impermanent loss arises when the relative price of pooled tokens changes after deposit; LPs may have fewer of the appreciating token than if they held directly.",
+      "Balancer's non-50/50 weights concentrate exposure in the preferred asset, reducing how much is sold by the AMM during price moves.",
+      "An 80/20 ETH/USDC pool experiences significantly less IL on ETH appreciation compared to a Uniswap 50/50 ETH/USDC pool."
+    ]
+  }
+]

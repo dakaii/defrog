@@ -3,10 +3,11 @@ Tests for API security: authentication, CORS, rate limiting, and input validatio
 
 Uses FastAPI's TestClient with module-level mocks so no real DB or LLM is needed.
 """
-import sys
 import os
-import pytest
+import sys
 from unittest.mock import Mock, patch
+
+import pytest
 
 sys.path.append('/app')
 
