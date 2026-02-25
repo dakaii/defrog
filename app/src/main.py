@@ -2,22 +2,25 @@
 DeFrog: RAG for DeFi Documentation
 FastAPI backend for querying DeFi protocols
 """
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Security
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security.api_key import APIKeyHeader
-from pydantic import BaseModel
-from typing import Optional, List, Dict
-from psycopg2.extras import RealDictCursor
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-import os
-from dotenv import load_dotenv
+import json
 import logging
+import os
 import time
-from src.retrieval.rag_engine import RAGEngine
+from contextlib import asynccontextmanager
+
+from dotenv import load_dotenv
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Security
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from fastapi.security.api_key import APIKeyHeader
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, ConfigDict
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
 from src.ingestion.vector_store import VectorStore
+from src.retrieval.rag_engine import RAGEngine
 
 # Load environment variables
 load_dotenv()
@@ -79,7 +82,7 @@ _API_KEY = os.getenv("API_KEY", "").strip()
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
-async def verify_api_key(key: Optional[str] = Security(_api_key_header)):
+async def verify_api_key(key: str | None = Security(_api_key_header)):
     if not _API_KEY:
         return  # Auth disabled — dev/local mode
     if key != _API_KEY:
@@ -93,8 +96,10 @@ class QueryRequest(BaseModel):
 
 
 class QueryResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     answer: str
-    sources: List[Dict]
+    sources: list[dict]
     model_used: str
     latency_ms: int
     documents_retrieved: int
@@ -102,7 +107,7 @@ class QueryResponse(BaseModel):
 
 
 class IngestionRequest(BaseModel):
-    protocol: Optional[str] = None  # If None, crawl all
+    protocol: str | None = None  # If None, crawl all
     force_refresh: bool = False
 
 
@@ -110,6 +115,24 @@ class HealthResponse(BaseModel):
     status: str
     postgres: bool
     openai: bool
+
+
+class FeedbackRequest(BaseModel):
+    query: str
+    answer: str
+    rating: int  # 1-5
+    comment: str | None = None
+    query_log_id: int | None = None
+
+
+class SourceRequest(BaseModel):
+    protocol_name: str
+    doc_type: str  # whitepaper, docs, litepaper
+    url: str
+
+
+class SourceToggleRequest(BaseModel):
+    enabled: bool
 
 
 # Health check endpoint
@@ -139,7 +162,7 @@ async def query_defi(request: Request, body: QueryRequest):
     Main RAG query endpoint for DeFi questions
     """
     start_time = time.time()
-    
+
     if not body.query or not body.query.strip():
         raise HTTPException(status_code=422, detail="Query cannot be empty")
     if len(body.query) > 1000:
@@ -148,10 +171,10 @@ async def query_defi(request: Request, body: QueryRequest):
     try:
         # Use the RAG engine to process the query
         result = rag_engine.query(body.query, top_k=body.top_k)
-        
+
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
-        
+
         return QueryResponse(
             answer=result["answer"],
             sources=result["sources"],
@@ -160,23 +183,49 @@ async def query_defi(request: Request, body: QueryRequest):
             documents_retrieved=result["documents_retrieved"],
             cache_hit=result.get("cache_hit", False)
         )
-    
+
     except Exception as e:
         logger.error(f"Error processing query: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-def _run_ingestion(protocol: Optional[str], force_refresh: bool):
-    """Run the ingestion pipeline in a background task"""
-    from src.ingestion.crawler import DeFiCrawler
+@app.post("/query/stream", dependencies=[Depends(verify_api_key)])
+@limiter.limit("10/minute")
+async def query_defi_stream(request: Request, body: QueryRequest):
+    """
+    Streaming RAG query endpoint — returns Server-Sent Events.
+    Each event is a JSON object:
+      {"type": "chunk",  "content": "<text>"}
+      {"type": "done",   "sources": [...], "model": "...", ...}
+      {"type": "error",  "message": "..."}
+    """
+    if not body.query or not body.query.strip():
+        raise HTTPException(status_code=422, detail="Query cannot be empty")
+    if len(body.query) > 1000:
+        raise HTTPException(status_code=422, detail="Query exceeds maximum length of 1000 characters")
+
+    async def generate():
+        try:
+            for event in rag_engine.query_stream(body.query, top_k=body.top_k):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            logger.error(f"Error in streaming query: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+async def _run_ingestion(protocol: str | None, force_refresh: bool):
+    """Run the ingestion pipeline as an async background task (uses aiohttp)"""
     from src.ingestion.chunking import ChunkingPipeline
+    from src.ingestion.crawler import DeFiCrawler
 
-    crawler = DeFiCrawler()
+    crawler = DeFiCrawler(vector_store=vector_store)
     chunker = ChunkingPipeline(chunk_size=800, chunk_overlap=200)
 
-    # Crawl documents (filter by protocol if specified)
+    # Crawl documents concurrently; filter by protocol if specified
     logger.info(f"Starting ingestion for: {protocol or 'all protocols'}")
-    all_docs = crawler.crawl_all()
+    all_docs = await crawler.crawl_all_async()
 
     if protocol:
         all_docs = [d for d in all_docs if d.protocol.lower() == protocol.lower()]
@@ -280,7 +329,7 @@ async def get_cost_analytics():
         }
     except Exception as e:
         logger.error(f"Failed to fetch cost analytics: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch cost analytics")
+        raise HTTPException(status_code=500, detail="Failed to fetch cost analytics") from e
 
 
 @app.get("/analytics/quality")
@@ -313,7 +362,7 @@ async def get_quality_metrics():
         }
     except Exception as e:
         logger.error(f"Failed to fetch quality metrics: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch quality metrics")
+        raise HTTPException(status_code=500, detail="Failed to fetch quality metrics") from e
 
 
 @app.get("/analytics/cache")
@@ -374,6 +423,125 @@ async def evaluate_rag_response(http_request: Request, request: dict):
         "overall_score": result.overall_score,
         "metadata": result.metadata
     }
+
+
+@app.post("/feedback")
+async def submit_feedback(body: FeedbackRequest):
+    """Submit feedback (1-5 rating) for a RAG response"""
+    if not 1 <= body.rating <= 5:
+        raise HTTPException(status_code=422, detail="Rating must be between 1 and 5")
+
+    conn = None
+    cur = None
+    try:
+        conn = vector_store.get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO feedback (query_text, answer, rating, comment, query_log_id)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (body.query, body.answer, body.rating, body.comment, body.query_log_id))
+        row = cur.fetchone()
+        conn.commit()
+        return {"id": row[0], "status": "accepted"}
+    except Exception as e:
+        logger.error(f"Failed to store feedback: {e}")
+        raise HTTPException(status_code=500, detail="Failed to store feedback") from e
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+@app.get("/sources")
+async def list_sources():
+    """List all document sources"""
+    try:
+        rows = _query_db("SELECT id, protocol_name, doc_type, url, enabled, created_at FROM document_sources ORDER BY id")
+        return {"sources": [dict(r) for r in rows]}
+    except Exception as e:
+        logger.error(f"Failed to fetch sources: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch sources") from e
+
+
+@app.post("/sources", dependencies=[Depends(verify_api_key)])
+async def add_source(body: SourceRequest):
+    """Add a new document source"""
+    conn = None
+    cur = None
+    try:
+        conn = vector_store.get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO document_sources (protocol_name, doc_type, url)
+            VALUES (%s, %s, %s)
+            RETURNING id
+        """, (body.protocol_name, body.doc_type, body.url))
+        row = cur.fetchone()
+        conn.commit()
+        return {"id": row[0], "status": "created"}
+    except Exception as e:
+        logger.error(f"Failed to add source: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add source") from e
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+@app.patch("/sources/{source_id}", dependencies=[Depends(verify_api_key)])
+async def toggle_source(source_id: int, body: SourceToggleRequest):
+    """Enable or disable a document source"""
+    conn = None
+    cur = None
+    try:
+        conn = vector_store.get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE document_sources SET enabled = %s WHERE id = %s RETURNING id",
+            (body.enabled, source_id)
+        )
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Source not found")
+        conn.commit()
+        return {"id": source_id, "enabled": body.enabled}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update source: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update source") from e
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+@app.delete("/sources/{source_id}", dependencies=[Depends(verify_api_key)])
+async def delete_source(source_id: int):
+    """Delete a document source"""
+    conn = None
+    cur = None
+    try:
+        conn = vector_store.get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM document_sources WHERE id = %s RETURNING id", (source_id,))
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Source not found")
+        conn.commit()
+        return {"id": source_id, "status": "deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete source: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete source") from e
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
 
 
 # List available protocols

@@ -1,14 +1,16 @@
 """
 RAG engine for DeFi queries with optimized hybrid search and query logging
 """
+import logging
 import os
 import time
-import logging
-from typing import List, Dict
+from collections.abc import Iterator
+
+from dotenv import load_dotenv
 from openai import OpenAI
+
 from src.ingestion.vector_store import VectorStore
 from src.optimization.search_optimizer import HybridSearchOptimizer
-from dotenv import load_dotenv
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -33,14 +35,15 @@ class RAGEngine:
         api_key = os.getenv('LLM_API_KEY') or os.getenv('OPENAI_API_KEY')
         base_url = os.getenv('LLM_BASE_URL')  # For DeepSeek, Qwen, etc.
 
+        _timeout = 30.0
         if base_url:
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
+            self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=_timeout)
         else:
-            self.client = OpenAI(api_key=api_key)
+            self.client = OpenAI(api_key=api_key, timeout=_timeout)
 
         self.model = os.getenv('LLM_MODEL', 'gpt-4o-mini')
 
-    def query(self, question: str, top_k: int = 5) -> Dict:
+    def query(self, question: str, top_k: int = 5) -> dict:
         """
         Process a query using RAG:
         1. Retrieve relevant documents via optimized hybrid search
@@ -95,7 +98,76 @@ class RAGEngine:
             "cache_hit": cache_hit
         }
 
-    def _build_context(self, documents: List[Dict]) -> str:
+    def query_stream(self, question: str, top_k: int = 5) -> Iterator[dict]:
+        """
+        Stream answer for a query. Yields dicts of two types:
+          {"type": "chunk", "content": "<text>"}   — incremental answer text
+          {"type": "done",  "sources": [...], "model": "...", ...}  — final metadata
+          {"type": "error", "message": "..."}       — on failure
+        """
+        search_results = self.optimizer.adaptive_search(question, top_k=top_k)
+        cache_hit = self.optimizer.was_cache_hit()
+        documents = self.optimizer.search_results_to_dicts(search_results)
+
+        if not documents:
+            yield {
+                "type": "done",
+                "answer": "I couldn't find relevant information to answer your question.",
+                "sources": [],
+                "model": self.model,
+                "documents_retrieved": 0,
+                "cache_hit": False,
+            }
+            return
+
+        context = self._build_context(documents)
+        sources = self._extract_sources(documents)
+
+        system_prompt = (
+            "You are a DeFi expert assistant. Answer questions about DeFi protocols "
+            "based on the provided context from official whitepapers and documentation. "
+            "Be accurate, concise, and cite which protocol's documentation you're referencing "
+            "when relevant. If the context doesn't contain enough information to fully answer "
+            "the question, say so."
+        )
+        user_prompt = (
+            f"Context from DeFi documentation:\n{context}\n\n"
+            f"Question: {question}\n\n"
+            "Please provide a clear and accurate answer based on the context above."
+        )
+
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=500,
+                stream=True,
+            )
+
+            full_answer = ""
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    text = chunk.choices[0].delta.content
+                    full_answer += text
+                    yield {"type": "chunk", "content": text}
+
+            yield {
+                "type": "done",
+                "sources": sources,
+                "model": self.model,
+                "documents_retrieved": len(documents),
+                "cache_hit": cache_hit,
+            }
+
+        except Exception as e:
+            logger.error(f"Error streaming answer: {e}")
+            yield {"type": "error", "message": str(e)}
+
+    def _build_context(self, documents: list[dict]) -> str:
         """Build context from retrieved documents"""
         context_parts = []
 
@@ -110,7 +182,7 @@ class RAGEngine:
 
         return "\n".join(context_parts)
 
-    def _extract_sources(self, documents: List[Dict]) -> List[Dict]:
+    def _extract_sources(self, documents: list[dict]) -> list[dict]:
         """Extract source information from documents"""
         sources = []
 
@@ -126,7 +198,7 @@ class RAGEngine:
 
         return sources
 
-    def _generate_answer(self, question: str, context: str) -> Dict:
+    def _generate_answer(self, question: str, context: str) -> dict:
         """Generate answer using LLM with context. Returns answer text and token usage."""
 
         system_prompt = """You are a DeFi expert assistant. Answer questions about DeFi protocols
