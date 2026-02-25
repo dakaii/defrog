@@ -5,6 +5,8 @@ import os
 import logging
 from typing import List, Dict, Optional
 import psycopg2
+import psycopg2.pool
+import psycopg2.extensions
 from psycopg2.extras import RealDictCursor
 import numpy as np
 from openai import OpenAI
@@ -13,6 +15,47 @@ from dotenv import load_dotenv
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+class _PooledConnection:
+    """
+    Proxy around a psycopg2 connection checked out from a ThreadedConnectionPool.
+    Intercepts close() to return the connection to the pool rather than destroying
+    the underlying TCP socket, making it a transparent drop-in for callers that
+    already call conn.close() in their finally blocks.
+    """
+
+    def __init__(self, conn, pool: psycopg2.pool.ThreadedConnectionPool):
+        # Use object.__setattr__ to avoid triggering __getattr__ during init
+        object.__setattr__(self, '_conn', conn)
+        object.__setattr__(self, '_pool', pool)
+
+    # Delegate every attribute/method lookup to the real connection
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, '_conn'), name)
+
+    # Explicit delegation for the most-used methods (avoids __getattr__ overhead)
+    def cursor(self, *args, **kwargs):
+        return object.__getattribute__(self, '_conn').cursor(*args, **kwargs)
+
+    def commit(self):
+        return object.__getattribute__(self, '_conn').commit()
+
+    def rollback(self):
+        return object.__getattribute__(self, '_conn').rollback()
+
+    def close(self):
+        """Return the connection to the pool instead of closing it."""
+        conn = object.__getattribute__(self, '_conn')
+        pool = object.__getattribute__(self, '_pool')
+        if not conn.closed:
+            # Roll back any open transaction before returning to pool
+            if conn.status != psycopg2.extensions.STATUS_READY:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        pool.putconn(conn)
 
 
 class VectorStore:
@@ -26,20 +69,42 @@ class VectorStore:
             'user': os.getenv('POSTGRES_USER', 'postgres'),
             'password': os.getenv('POSTGRES_PASSWORD', 'postgres')
         }
+
+        # Connection pool: keep 2 connections warm, allow up to 10 under load.
+        # Sizes are configurable via env so production can tune without code changes.
+        min_conn = int(os.getenv('DB_POOL_MIN', '2'))
+        max_conn = int(os.getenv('DB_POOL_MAX', '10'))
+        self._pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=min_conn,
+            maxconn=max_conn,
+            **self.conn_params
+        )
+        logger.info(f"DB connection pool initialised (min={min_conn}, max={max_conn})")
+
         # Support different embedding providers
         api_key = os.getenv('EMBEDDING_API_KEY') or os.getenv('OPENAI_API_KEY')
         base_url = os.getenv('EMBEDDING_BASE_URL')  # For custom providers
-        
+
         if base_url:
             self.client = OpenAI(api_key=api_key, base_url=base_url)
         else:
             self.client = OpenAI(api_key=api_key)
-        
+
         self.embedding_model = os.getenv('EMBEDDING_MODEL', 'text-embedding-3-small')
-    
-    def get_connection(self):
-        """Get database connection"""
-        return psycopg2.connect(**self.conn_params)
+
+    def get_connection(self) -> '_PooledConnection':
+        """Check out a connection from the pool.
+
+        Callers should still call conn.close() when done — the _PooledConnection
+        proxy intercepts that call and returns the connection to the pool instead
+        of destroying it.
+        """
+        return _PooledConnection(self._pool.getconn(), self._pool)
+
+    def close(self):
+        """Close the connection pool (call on app shutdown)."""
+        self._pool.closeall()
+        logger.info("DB connection pool closed")
     
     def store_documents(self, documents: List[Dict]):
         """Store documents with embeddings in the database"""

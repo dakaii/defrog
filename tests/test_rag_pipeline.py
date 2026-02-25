@@ -172,7 +172,7 @@ class TestHybridSearch:
         )
         assert len(results) == 1
     
-    def test_adaptive_weights_short_query(self):
+    def test_adaptive_weights_short_query(self, mock_vector_store):
         """Test that short queries use balanced weights"""
         from src.optimization.search_optimizer import HybridSearchOptimizer
 
@@ -180,7 +180,7 @@ class TestHybridSearch:
         weights = optimizer._get_optimal_weights("uniswap liquidity")
         assert weights == {'vector': 0.5, 'keyword': 0.5}
 
-    def test_adaptive_weights_long_query(self):
+    def test_adaptive_weights_long_query(self, mock_vector_store):
         """Test that long queries favour vector search"""
         from src.optimization.search_optimizer import HybridSearchOptimizer
 

@@ -2,11 +2,16 @@
 DeFrog: RAG for DeFi Documentation
 FastAPI backend for querying DeFi protocols
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 from psycopg2.extras import RealDictCursor
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import os
 from dotenv import load_dotenv
 import logging
@@ -28,21 +33,57 @@ logger = logging.getLogger(__name__)
 rag_engine = RAGEngine()
 vector_store = VectorStore()
 
+# ---------------------------------------------------------------------------
+# Rate limiter
+# ---------------------------------------------------------------------------
+limiter = Limiter(key_func=get_remote_address)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    vector_store.close()
+
+
 # Create FastAPI app
 app = FastAPI(
     title="DeFrog - DeFi RAG System",
     description="Query DeFi protocol documentation with RAG",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Configure CORS
+# ---------------------------------------------------------------------------
+# CORS — read allowed origins from env, fall back to localhost dev defaults
+# ---------------------------------------------------------------------------
+_raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:8501,http://localhost:3000")
+allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure properly for production
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# API key authentication
+# When API_KEY env var is set, every protected endpoint requires the caller
+# to pass the same value in the  X-API-Key  header.
+# Leave API_KEY unset (or empty) to disable auth in local development.
+# ---------------------------------------------------------------------------
+_API_KEY = os.getenv("API_KEY", "").strip()
+_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(key: Optional[str] = Security(_api_key_header)):
+    if not _API_KEY:
+        return  # Auth disabled — dev/local mode
+    if key != _API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 # Request/Response models
@@ -91,16 +132,22 @@ async def health_check():
 
 
 # Main query endpoint
-@app.post("/query", response_model=QueryResponse)
-async def query_defi(request: QueryRequest):
+@app.post("/query", response_model=QueryResponse, dependencies=[Depends(verify_api_key)])
+@limiter.limit("10/minute")
+async def query_defi(request: Request, body: QueryRequest):
     """
     Main RAG query endpoint for DeFi questions
     """
     start_time = time.time()
     
+    if not body.query or not body.query.strip():
+        raise HTTPException(status_code=422, detail="Query cannot be empty")
+    if len(body.query) > 1000:
+        raise HTTPException(status_code=422, detail="Query exceeds maximum length of 1000 characters")
+
     try:
         # Use the RAG engine to process the query
-        result = rag_engine.query(request.query, top_k=request.top_k)
+        result = rag_engine.query(body.query, top_k=body.top_k)
         
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
@@ -159,17 +206,19 @@ def _run_ingestion(protocol: Optional[str], force_refresh: bool):
     logger.info(f"Ingestion complete. Total docs in DB: {vector_store.get_document_count()}")
 
 
-@app.post("/ingest")
+@app.post("/ingest", dependencies=[Depends(verify_api_key)])
+@limiter.limit("2/minute")
 async def ingest_documents(
-    request: IngestionRequest,
-    background_tasks: BackgroundTasks
+    request: Request,
+    body: IngestionRequest,
+    background_tasks: BackgroundTasks,
 ):
     """Trigger document ingestion pipeline in the background"""
-    background_tasks.add_task(_run_ingestion, request.protocol, request.force_refresh)
+    background_tasks.add_task(_run_ingestion, body.protocol, body.force_refresh)
 
     return {
         "status": "ingestion_started",
-        "protocol": request.protocol or "all",
+        "protocol": body.protocol or "all",
         "message": "Ingestion pipeline started in background"
     }
 
@@ -273,8 +322,9 @@ async def get_cache_stats():
     return rag_engine.optimizer.query_cache.get_stats()
 
 
-@app.post("/evaluate")
-async def evaluate_rag_response(request: dict):
+@app.post("/evaluate", dependencies=[Depends(verify_api_key)])
+@limiter.limit("5/minute")
+async def evaluate_rag_response(http_request: Request, request: dict):
     """Evaluate a RAG response and store results in database"""
     from src.evaluation.rag_evaluator import RAGEvaluator
 

@@ -11,6 +11,19 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Cross-encoder — loaded once at module level, optional dependency.
+# Falls back to term-overlap heuristic if sentence-transformers is not installed.
+# ---------------------------------------------------------------------------
+try:
+    from sentence_transformers import CrossEncoder as _CrossEncoderCls
+    _CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    _cross_encoder = _CrossEncoderCls(_CROSS_ENCODER_MODEL)
+    logger.info(f"Cross-encoder loaded: {_CROSS_ENCODER_MODEL}")
+except ImportError:
+    _cross_encoder = None
+    logger.info("sentence-transformers not installed — falling back to term-overlap reranking")
+
 
 @dataclass
 class SearchResult:
@@ -195,15 +208,42 @@ class HybridSearchOptimizer:
 
     def _rerank_results(self, results: List[SearchResult], query: str) -> List[SearchResult]:
         """
-        Rerank results using term overlap boost.
-        Blends the hybrid score (70%) with a term-overlap relevance signal (30%).
+        Rerank results using a cross-encoder when available, otherwise fall back
+        to term-overlap heuristic.
+
+        Cross-encoder path:
+          Uses cross-encoder/ms-marco-MiniLM-L-6-v2 to score each (query, chunk)
+          pair jointly.  Raw logits are normalised to [0, 1] via sigmoid so they
+          are comparable with other scores in the pipeline.
+
+        Fallback path:
+          Blends the hybrid score (70%) with a term-overlap relevance signal (30%).
         """
+        if not results:
+            return results
+
+        if _cross_encoder is not None:
+            pairs = [[query, r.content] for r in results]
+            try:
+                logits = _cross_encoder.predict(pairs)
+                # Sigmoid normalises logits to (0, 1) — higher means more relevant
+                scores = 1.0 / (1.0 + np.exp(-np.array(logits, dtype=float)))
+                for result, score in zip(results, scores):
+                    result.rerank_score = float(score)
+                logger.debug(f"Cross-encoder reranked {len(results)} results for query: {query[:60]}")
+            except Exception as e:
+                logger.warning(f"Cross-encoder failed, using heuristic fallback: {e}")
+                self._heuristic_rerank(results, query)
+        else:
+            self._heuristic_rerank(results, query)
+
+        return sorted(results, key=lambda x: x.rerank_score, reverse=True)
+
+    def _heuristic_rerank(self, results: List[SearchResult], query: str) -> None:
+        """Assign rerank_score in-place using term-overlap boost (fallback)."""
         for result in results:
             overlap_score = self._compute_term_overlap_boost(query, result.content)
-            result.rerank_score = (result.hybrid_score * 0.7 + overlap_score * 0.3)
-
-        reranked = sorted(results, key=lambda x: x.rerank_score, reverse=True)
-        return reranked
+            result.rerank_score = result.hybrid_score * 0.7 + overlap_score * 0.3
 
     def _compute_term_overlap_boost(self, query: str, document: str) -> float:
         """

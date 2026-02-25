@@ -9,7 +9,7 @@ psycopg2-binary==2.9.9
 pgvector==0.2.5
 
 # LLM & Embeddings
-openai==1.35.0
+openai==1.57.0
 
 # Data Processing (crawler, chunking)
 beautifulsoup4==4.12.3
@@ -21,3 +21,7 @@ numpy==1.26.0
 # Utilities
 python-dotenv==1.0.0
 requests==2.31.0
+slowapi==0.1.9
+
+# Cross-encoder reranking (~500 MB with torch, significantly improves retrieval quality)
+sentence-transformers==3.0.0
