@@ -11,7 +11,7 @@ DeFrog is a Retrieval Augmented Generation (RAG) system that allows you to query
 - **Vector Search**: Uses pgvector for semantic search through DeFi documentation
 - **Multiple Protocols**: Includes Uniswap, Aave, Compound, MakerDAO, Curve, and more
 - **Source Attribution**: Every answer includes sources from the original documentation
-- **Simple Interface**: Clean Streamlit UI for easy querying
+- **Simple Interface**: Vue.js UI for querying
 - **Docker Ready**: Full Docker Compose setup for easy deployment
 
 ## 🚀 Quick Start
@@ -50,12 +50,12 @@ docker-compose exec app python scripts/ingest_defi_docs.py --clear
 
 5. **Access the UI**
 ```bash
-# Streamlit (Docker)
-open http://localhost:8501
-
-# Vue.js frontend (alternative - run separately)
-cd frontend && bun install && bun run dev
 open http://localhost:3000
+```
+
+Or run the frontend locally for development:
+```bash
+cd frontend && bun install && bun run dev
 ```
 
 ## 🏗️ Architecture
@@ -72,7 +72,7 @@ open http://localhost:3000
 └──────────────▲──────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
-│   Streamlit or Vue.js Frontend      │
+│        Vue.js Frontend              │
 │        (Query Interface)            │
 └─────────────────────────────────────┘
 ```
@@ -112,7 +112,7 @@ GET /protocols
 
 - **Database**: PostgreSQL with pgvector extension
 - **Backend**: FastAPI + Python 3.11
-- **Frontend**: Streamlit
+- **Frontend**: Vue 3 + TypeScript + Tailwind
 - **Embeddings**: OpenAI text-embedding-3-small
 - **LLM**: GPT-4o-mini
 - **Infrastructure**: Docker Compose
@@ -127,7 +127,7 @@ defrog/
 │   │   ├── retrieval/     # RAG engine
 │   │   └── main.py        # API endpoints
 │   └── scripts/           # Ingestion scripts
-├── dashboard/             # Streamlit UI
+├── frontend/              # Vue.js UI
 ├── data/                  # Data storage
 ├── scripts/               # Database init
 └── docker-compose.yml     # Container setup
