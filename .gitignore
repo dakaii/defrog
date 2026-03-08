@@ -8,6 +8,9 @@ data/postgres/
 data/raw_docs/
 data/minio/
 
+# Node / Frontend
+node_modules/
+
 # Python
 __pycache__/
 *.py[cod]

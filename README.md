@@ -50,7 +50,12 @@ docker-compose exec app python scripts/ingest_defi_docs.py --clear
 
 5. **Access the UI**
 ```bash
+# Streamlit (Docker)
 open http://localhost:8501
+
+# Vue.js frontend (alternative - run separately)
+cd frontend && bun install && bun run dev
+open http://localhost:3000
 ```
 
 ## 🏗️ Architecture
@@ -67,7 +72,7 @@ open http://localhost:8501
 └──────────────▲──────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
-│        Streamlit Frontend           │
+│   Streamlit or Vue.js Frontend      │
 │        (Query Interface)            │
 └─────────────────────────────────────┘
 ```
